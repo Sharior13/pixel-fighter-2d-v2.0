@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Fighter 2D</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body  oncontextmenu="return false;"> 
+    
+    <canvas id="canvas"></canvas>
+    
+    <!-- title screen ui -->
+    <div id="title-screen"> 
+        <div class="title-box">
+            <img src="./assets/title-logo-red.png" alt="title-logo">
+        </div>
+        <div class="top-buttons">
+            <button class="btn btn-large" id="quick-start-btn">Quick Play</button>
+            <button class="btn btn-large" id="room-btn">Create / Join Room</button>
+        </div>
+        <div class="bottom-buttons">
+            <button class="btn btn-small" id="settings-btn">Settings</button>
+            <button class="btn btn-small" id="profile-btn">Profile</button>
+        </div>
+    </div>
+
+    <!-- queuing ui -->
+    <div id="queuing"></div>
+
+    <!-- character selection ui -->
+
+    <div id="character-select" class="character-container hidden">
+        <!-- Main Selection Area -->
+        <div class="timer-container">
+            <div class="timer-display" id="character-timer">30</div>
+        </div>
+        <div class="selection-wrapper">
+            <!-- Player 1 Platform -->
+            <div class="player-platform">
+                <div class="platform-stage">
+                    <div class="platform-base"></div>
+                    <div class="platform-glow"></div>
+                    <div class="character-preview animate" id="player1-preview">
+                        <span class="silhouette">❓</span>
+                    </div>
+                </div>
+                <div class="platform-label active" id="p1-label">PLAYER 1</div>
+            </div>
+
+            <!-- Character Selection Grid -->
+            <div class="character-selection">
+                <div class="selection-title">CHOOSE PLAYER WARRIOR</div>
+                <div class="character-grid" id="character-grid">
+                    <!-- Characters will be populated by JavaScript -->
+                </div><br>
+                <p id="statusText" class="selection-title"></p>
+                <div class="stage-selection hidden" id="stage-selection">
+                    <!-- Stages will be populated by JavaScript -->
+                </div>
+            </div>
+
+            <!-- Player 2 Platform -->
+            <div class="player-platform">
+                <div class="platform-stage">
+                    <div class="platform-base"></div>
+                    <div class="platform-glow"></div>
+                    <div class="character-preview animate" id="player2-preview">
+                        <span class="silhouette">❓</span>
+                    </div>
+                </div>
+                <div class="platform-label" id="p2-label">PLAYER 2</div>
+            </div>
+        </div>
+
+        <!-- VS Text -->
+        <div class="vs-text">VS</div>
+
+        <!-- Next Button -->
+        <div class="action-button-container">
+            <button class="lock-in-button" id="lockBtn" disabled>LOCK IN</button>
+        </div>
+    </div>
+    <!-- battle ui -->
+    <div class="game-container hidden">
+        <!-- Left Player -->
+        <div class="character-frame left">
+            <img src="./assets/characters/rukia/rukia-icon.png" alt="Player 1" class="character-image">
+        </div>
+        <div class="character-name left">RUKIA</div>
+
+        <div class="bars-container left">
+            <div class="health-bar-wrapper">
+                <div class="health-bar-bg" id="health-bg-p1">
+                    <div class="health-bar-fill" id="health-p1"></div>
+                </div>
+            </div>
+            <div class="ultimate-bar-wrapper">
+                <div class="ultimate-bar-bg" id="ultimate-bg-p1">
+                    <div class="ultimate-bar-fill" id="ultimate-p1"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Player -->
+        <div class="character-frame right">
+            <img src="./assets/characters/naruto/naruto-icon.png" alt="Player 2" class="character-image">
+        </div>
+        <div class="character-name right">Naruto</div>
+
+        <div class="bars-container right">
+            <div class="health-bar-wrapper">
+                <div class="health-bar-bg" id="health-bg-p2">
+                    <div class="health-bar-fill" id="health-p2"></div>
+                </div>
+            </div>
+            <div class="ultimate-bar-wrapper">
+                <div class="ultimate-bar-bg" id="ultimate-bg-p2">
+                    <div class="ultimate-bar-fill" id="ultimate-p2"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Timer -->
+        <div class="timer-container">
+            <div class="timer-display" id="timer">90</div>
+        </div>
+        
+        <!-- Round Indicator -->
+        <div class="round-indicator">Fire Village</div>
+    </div>
+    <!-- custom room service -->
+    <section id="main-container" class="hidden main-container">
+        <div class="box">
+            <div class="top-bar">
+               <span class="custom-room">
+               <span>C</span><span>U</span><span>S</span><span>T</span><span>O</span><span>M</span>
+               <span class="space"></span>
+              <span>R</span><span>O</span><span>O</span><span>M</span>
+              </span>
+          
+                <button class="back-btn btn" id="room-back">← BACK</button>
+            </div>
+            <div class="join-wrap">
+            
+                <div class="join">
+                    <h3>JOIN</h3>
+                
+                    <div class="row">
+                        <span>Room Id</span>
+                        <input placeholder="Join" class="inp" required>
+                    </div><br>
+                
+                    <button class="btn" id="room-join-btn">Join</button>
+                </div>
+            
+                <div class="join">
+                    <h3>CREATE</h3>
+                
+                    <div class="row">
+                        <span>Room Name</span>
+                        <input placeholder="Enter Name" class="inp">
+                    </div><br>
+                
+                    <button class="btn" id="room-create-btn">Create</button>
+                </div>
+            
+            </div>
+        </div>
+    </section>
+    <!-- settings ui -->
+    <div class="settings-container hidden">
+        <div class="settings-header">
+            <h1 class="title">SETTINGS</h1>
+            <button class="back-btn" id="backBtn">← BACK</button>
+        </div>
+
+        <div class="settings-content">
+            <!-- Audio Settings Section -->
+            <div class="settings-section">
+                <h2 class="section-title">AUDIO</h2>
+                <div class="settings-group">
+                    <div class="setting-item">
+                        <label for="masterVolume">
+                            <span class="setting-label">Master Volume</span>
+                            <span class="setting-value" id="masterValue">100%</span>
+                        </label>
+                        <input type="range" id="masterVolume" min="0" max="100" value="100" class="volume-slider">
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="musicVolume">
+                            <span class="setting-label">Music Volume</span>
+                            <span class="setting-value" id="musicValue">80%</span>
+                        </label>
+                        <input type="range" id="musicVolume" min="0" max="100" value="80" class="volume-slider">
+                    </div>
+
+                    <div class="setting-item">
+                        <label for="sfxVolume">
+                            <span class="setting-label">Sound Effects (SFX)</span>
+                            <span class="setting-value" id="sfxValue">90%</span>
+                        </label>
+                        <input type="range" id="sfxVolume" min="0" max="100" value="90" class="volume-slider">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="settings-section">
+                <h2 class="section-title">HOW TO PLAY</h2>
+                <div class="settings-group">
+                    <div class="control-item">
+                        <span class="control-label">Move Left</span>
+                        <button class="key-btn" data-action="moveLeft">A</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Move Right</span>
+                        <button class="key-btn" data-action="moveRight">D</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Jump</span>
+                        <button class="key-btn" data-action="jump">SPACE/W</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Block</span>
+                        <button class="key-btn" data-action="crouch">S</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Basic</span>
+                        <button class="key-btn" data-action="lightAttack">ArrowUp</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Attaack 1</span>
+                        <button class="key-btn" data-action="lightAttack">ArrowLeft</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Attack 2</span>
+                        <button class="key-btn" data-action="heavyAttack">ArrowRight</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Special Move</span>
+                        <button class="key-btn" data-action="specialMove">ArrowDown</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Ultimate Move</span>
+                        <button class="key-btn" data-action="specialMove">V</button>
+                    </div>
+
+                    <div class="control-item">
+                        <span class="control-label">Dash</span>
+                        <button class="key-btn" data-action="blockDodge">SHIFT</button>
+                    </div>
+             </div>
+        </div>
+    </div>
+    </div>
+    <!-- profile ui -->
+    <div class="profile-container hidden">
+        <div class="profile-card">
+            <!-- Header -->
+            <div class="profile-header">
+                <h1 class="title">PLAYER PROFILE</h1>
+            </div>
+
+            <!-- Avatar Section -->
+            <div class="avatar-section">
+                <div class="avatar-container">
+                    <img id="avatarImage" src="./assets/characters/rukia/rukia-icon.png" alt="Player Avatar">
+                </div>
+            </div>
+
+
+            <!-- Profile Info -->
+            <div class="profile-info">
+
+                <input class="username username-input"
+                    type="text" 
+                    placeholder="Enter username"
+                    value="Player"
+                    maxlength="12"
+                >
+
+            </div>
+            
+            <!-- Buttons -->
+           
+                <button class="btn btn-secondary" onclick="backToMenu()">
+                    <span>BACK TO MENU</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+    <!-- <script src="/socket.io/socket.io.js"></script> -->
+    <script type="module" src="./ui/titleScreen.js"></script>
+</body>
+</html>

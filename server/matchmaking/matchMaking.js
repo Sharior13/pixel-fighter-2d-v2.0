@@ -1,0 +1,211 @@
+const { matches, createMatch, startCharacterSelectTimeout } = require("./matchManager.js");
+const { initializeGameState, startGameLoop } = require("../core/gameState.js");
+
+const ROOM_ID_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const QUEUE_SIZE = 2;
+const queue = [];
+const customRooms = new Map(); // Store custom rooms waiting for second player
+let ioInstance = null;
+
+const initMatchmaking = (io) => {
+    ioInstance = io;
+};
+
+//add players to matchmaking queue
+const addToQueue = (socket)=>{
+    if(queue.find((p)=> p.id === socket.id)){
+        return null;
+    }
+
+    queue.push(socket);
+    console.log("Queued:", socket.id);
+
+    return tryMatch();
+};
+
+//remove players from matchmaking queue
+const removeFromQueue = (socket)=>{
+    const index = queue.findIndex(p => p.id === socket.id);
+    if (index !== -1){
+        queue.splice(index, 1);
+        console.log("Removed from queue:", socket.id);
+    }
+    
+    // Also check custom rooms
+    for (const [roomId, roomData] of customRooms.entries()) {
+        if (roomData.creator.id === socket.id) {
+            customRooms.delete(roomId);
+            console.log(`Custom room ${roomId} deleted - creator left`);
+        }
+    }
+};
+
+//create custom room
+const createCustomRoom = (socket) => {
+    if (!ioInstance) {
+        console.error("io instance not initialized");
+        return null;
+    }
+
+    const roomId = generateRoomCode();
+    
+    customRooms.set(roomId, {
+        roomId,
+        creator: socket,
+        createdAt: Date.now()
+    });
+
+    socket.join(roomId);
+    console.log(`Custom room created: ${roomId} by ${socket.id}`);
+
+    return { roomId };
+};
+
+//join custom room
+const joinCustomRoom = (socket, roomId) => {
+    if (!ioInstance) {
+        console.error("io instance not initialized");
+        return null;
+    }
+
+    const room = customRooms.get(roomId);
+    
+    if (!room) {
+        return { error: "Room not found" };
+    }
+
+    if (room.creator.id === socket.id) {
+        return { error: "Cannot join your own room" };
+    }
+
+    // Remove room from waiting list
+    customRooms.delete(roomId);
+
+    const players = [room.creator, socket];
+    const match = createMatch(roomId, players);
+
+    // Make both players join the match room
+    players.forEach((player) => {
+        player.join(roomId);
+    });
+
+    console.log(`Custom room ${roomId} matched with 2 players`);
+
+    ioInstance.to(match.roomId).emit("matchFound", {
+        roomId: match.roomId,
+        players: match.players.map(p => ({
+            socketId: p.socketId,
+            playerIndex: p.playerIndex
+        }))
+    });
+
+    // Start the character selection timeout
+    startCharacterSelectTimeout(match, (fightData) => {
+        try {
+            const gameState = initializeGameState(fightData.roomId, fightData.players, fightData.mapId);
+            ioInstance.to(fightData.roomId).emit("startMatch", {
+                roomId: fightData.roomId,
+                players: fightData.players,
+                map: gameState.map,
+                gameState: {
+                    players: gameState.players.map(p => ({
+                        socketId: p.socketId,
+                        playerIndex: p.playerIndex,
+                        character: p.character,
+                        position: p.position,
+                        health: p.health,
+                        maxHealth: p.maxHealth
+                    }))
+                }
+            });
+
+            startGameLoop(fightData.roomId, ioInstance);
+            console.log("[matchmaking] Timeout: Custom match started successfully");
+        } catch (error) {
+            ioInstance.to(fightData.roomId).emit("matchError", {
+                message: "Failed to start match"
+            });
+        }
+    });
+
+    return { success: true, match };
+};
+
+//start match phase on full queue
+const tryMatch = ()=>{
+    if(queue.length < QUEUE_SIZE){
+        return null;
+    }
+
+    if(!ioInstance){
+        console.error("io instance not initialized");
+        return null;
+    }
+
+    //add players in queue to players variable and reset queue
+    const players = queue.splice(0, QUEUE_SIZE);
+
+    const roomId = generateRoomCode();
+    const match = createMatch(roomId, players);
+
+    //make each player join the match room
+    players.forEach((player)=>{
+        player.join(roomId);
+    });
+
+    console.log(`Match created: ${roomId}`);
+
+    ioInstance.to(match.roomId).emit("matchFound", {
+        roomId: match.roomId,
+        players: match.players.map(p => ({
+            socketId: p.socketId,
+            username: p.user,
+            playerIndex: p.playerIndex
+        }))
+    });
+
+    // start the character selection timeout
+    startCharacterSelectTimeout(match, (fightData) => {
+        try{
+            const gameState = initializeGameState(fightData.roomId, fightData.players, fightData.mapId);
+            ioInstance.to(fightData.roomId).emit("startMatch", {
+                roomId: fightData.roomId,
+                players: fightData.players,
+                map: gameState.map,
+                gameState: {
+                    players: gameState.players.map(p => ({
+                        socketId: p.socketId,
+                        playerIndex: p.playerIndex,
+                        character: p.character,
+                        position: p.position,
+                        health: p.health,
+                        maxHealth: p.maxHealth
+                    }))
+                }
+            });
+
+            startGameLoop(fightData.roomId, ioInstance);
+            console.log("[matchmaking] Timeout: Match started successfully");
+        } catch(error){
+                ioInstance.to(fightData.roomId).emit("matchError", {
+                message: "Failed to start match"
+            });
+        }
+    });
+
+    return match;
+};
+
+//generate random room id that doesnt already exist
+const generateRoomCode = (length = 5)=>{
+    let code = "";
+    do{
+        code = "";
+        for (let i = 0; i < length; i++) {
+            code += ROOM_ID_CHARS[Math.floor(Math.random() * ROOM_ID_CHARS.length)];
+        }
+    } while(matches.has(code) || customRooms.has(code));
+    return code;
+};
+
+module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom };
