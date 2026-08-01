@@ -1393,6 +1393,49 @@ body{
             background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), transparent);
         }
 
+        /* Combo Display */
+        .combo-display {
+            margin-top: clamp(4px, 0.8vh, 8px);
+            font-size: clamp(14px, 1.8vh, 18px);
+            font-weight: bold;
+            color: #ffd700;
+            text-shadow: 2px 2px 0 #000, 0 0 10px rgba(255, 215, 0, 0.7);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: opacity 0.15s ease;
+        }
+
+        .bars-container.left .combo-display {
+            text-align: left;
+        }
+
+        .bars-container.right .combo-display {
+            text-align: right;
+        }
+
+        .combo-display.hidden {
+            opacity: 0;
+        }
+
+        .combo-display.combo-orange {
+            color: #ff8c00;
+            text-shadow: 2px 2px 0 #000, 0 0 12px rgba(255, 140, 0, 0.8);
+        }
+
+        .combo-display.combo-red {
+            color: #ff3333;
+            text-shadow: 2px 2px 0 #000, 0 0 14px rgba(255, 51, 51, 0.9);
+        }
+
+        @keyframes comboPop {
+            0% { transform: scale(1.5); }
+            100% { transform: scale(1); }
+        }
+
+        .combo-display.combo-pop {
+            animation: comboPop 0.22s ease-out;
+        }
+
         /* Timer */
         .timer-container {
             position: absolute;

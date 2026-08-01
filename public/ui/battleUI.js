@@ -11,16 +11,20 @@ class BattleUI {
         this.p1UltimateBar = document.getElementById('ultimate-p1');
         this.p1CharacterImage = document.querySelector('.character-frame.left .character-image');
         this.p1CharacterName = document.querySelector('.character-name.left');
+        this.p1ComboDisplay = document.getElementById('combo-p1');
         
         // Player 2 (right) elements
         this.p2HealthBar = document.getElementById('health-p2');
         this.p2UltimateBar = document.getElementById('ultimate-p2');
         this.p2CharacterImage = document.querySelector('.character-frame.right .character-image');
         this.p2CharacterName = document.querySelector('.character-name.right');
+        this.p2ComboDisplay = document.getElementById('combo-p2');
         
         this.isVisible = false;
         this.currentState = null;
         this.localPlayerIndex = null; // Track which side the local player is on
+        this.p1PreviousCombo = 0;
+        this.p2PreviousCombo = 0;
     }
     
     show() {
@@ -32,6 +36,8 @@ class BattleUI {
         this.gameContainer.classList.add('hidden');
         this.isVisible = false;
         this.currentState = null;
+        this.p1PreviousCombo = 0;
+        this.p2PreviousCombo = 0;
     }
     
     initialize(gameState) {
@@ -77,6 +83,8 @@ class BattleUI {
         
         // Store player indices for update method
         this.localPlayerIndex = localPlayer.playerIndex;
+        this.p1PreviousCombo = 0;
+        this.p2PreviousCombo = 0;
         
         this.show();
         console.log('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
@@ -134,8 +142,40 @@ class BattleUI {
         this.updateHealthBar(this.p2HealthBar, p2.health, p2.maxHealth);
         this.updateUltimateBar(this.p2UltimateBar, p2.cooldowns?.ultimate || 0);
         
+        // Update combo displays
+        this.updateComboDisplay(this.p1ComboDisplay, p1.combo || 0, (p1.combo || 0) > this.p1PreviousCombo);
+        this.updateComboDisplay(this.p2ComboDisplay, p2.combo || 0, (p2.combo || 0) > this.p2PreviousCombo);
+        this.p1PreviousCombo = p1.combo || 0;
+        this.p2PreviousCombo = p2.combo || 0;
+        
         // Update timer
         this.updateTimer(gameState.timeRemaining);
+    }
+    
+    updateComboDisplay(element, combo, isIncrease) {
+        if (!combo || combo < 2) {
+            element.classList.add('hidden');
+            element.textContent = '';
+            return;
+        }
+        
+        element.classList.remove('hidden');
+        element.textContent = `${combo} HIT COMBO`;
+        
+        // color tier escalates with combo size
+        element.classList.remove('combo-orange', 'combo-red');
+        if (combo >= 6) {
+            element.classList.add('combo-red');
+        } else if (combo >= 4) {
+            element.classList.add('combo-orange');
+        }
+        
+        // retrigger the pop animation on a new hit (force reflow so the class re-applies)
+        if (isIncrease) {
+            element.classList.remove('combo-pop');
+            void element.offsetWidth;
+            element.classList.add('combo-pop');
+        }
     }
     
     updateHealthBar(barElement, currentHealth, maxHealth) {
