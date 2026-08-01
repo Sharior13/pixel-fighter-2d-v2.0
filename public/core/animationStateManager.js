@@ -1,11 +1,11 @@
 class AnimationStateManager {
-    // Animation categories for clarity
+    //animation categories for clarity
     static ANIMATIONS = {
-        // Match end states
+        //match end states
         VICTORY: 'victory',
         DEFEAT: 'defeat',
         
-        // Combat states
+        //combat states
         ATTACK_BASIC: 'attack_basic',
         ATTACK_SPECIAL: 'attack_special',
         ATTACK_ULTIMATE: 'attack_ultimate',
@@ -14,16 +14,16 @@ class AnimationStateManager {
         HIT: 'hit',
         BLOCK: 'block',
         
-        // Movement states
+        //movement states
         DASH: 'dash',
         JUMP: 'jump',
         WALK: 'walk',
         
-        // Default
+        //default
         IDLE: 'idle'
     };
 
-    // Animations that must complete before transitioning
+    //animations that must complete before transitioning
     static NON_INTERRUPTIBLE = new Set([
         'attack_basic',
         'attack_special',
@@ -34,7 +34,7 @@ class AnimationStateManager {
         'defeat'
     ]);
 
-    // Attack type to animation mapping
+    //attack type to animation mapping
     static ATTACK_MAP = {
         'attack1': 'attack1',
         'attack2': 'attack2',
@@ -43,20 +43,20 @@ class AnimationStateManager {
         'ultimate': 'attack_ultimate'
     };
 
-    // Constants for movement detection
+    //constants for movement detection
     static MOVEMENT_THRESHOLD = 0.5;
     static GROUNDED_VELOCITY_THRESHOLD = 0.1;
 
-    constructor() {
-        this.playerAnimators = new Map(); // Map<socketId, animator>
-        this.playerStates = new Map();    // Map<socketId, AnimationState>
-        this.previousFrameData = new Map(); // Map<socketId, FrameData>
-        this.playerCharacters = new Map(); // Map<socketId, characterId>
-        this.audioManager = null; // Will be set externally
+    constructor(){
+        this.playerAnimators = new Map(); //Map<socketId, animator>
+        this.playerStates = new Map();    //Map<socketId, AnimationState>
+        this.previousFrameData = new Map(); //Map<socketId, FrameData>
+        this.playerCharacters = new Map(); //Map<socketId, characterId>
+        this.audioManager = null; //will be set externally
     }
 
-    registerPlayer(socketId, animator, characterId) {
-        if (!socketId || !animator) {
+    registerPlayer(socketId, animator, characterId){
+        if(!socketId || !animator){
             console.error('[AnimationStateManager] Invalid registration parameters');
             return;
         }
@@ -81,7 +81,7 @@ class AnimationStateManager {
         console.log(`[AnimationStateManager] Registered player: ${socketId} (${characterId})`);
     }
 
-    unregisterPlayer(socketId) {
+    unregisterPlayer(socketId){
         this.playerAnimators.delete(socketId);
         this.playerStates.delete(socketId);
         this.previousFrameData.delete(socketId);
@@ -89,19 +89,19 @@ class AnimationStateManager {
         console.log(`[AnimationStateManager] Unregistered player: ${socketId}`);
     }
 
-    setAudioManager(audioManager) {
+    setAudioManager(audioManager){
         this.audioManager = audioManager;
         console.log('[AnimationStateManager] Audio manager set');
     }
 
-    updatePlayerAnimation(player, deltaTime) {
+    updatePlayerAnimation(player, deltaTime){
         if (!player || !player.socketId) {
             console.warn('[AnimationStateManager] Invalid player object');
             return;
         }
 
         const animator = this.playerAnimators.get(player.socketId);
-        if (!animator) {
+        if(!animator){
             console.warn(`[AnimationStateManager] No animator found for player: ${player.socketId}`);
             return;
         }
@@ -109,149 +109,144 @@ class AnimationStateManager {
         const currentAnimState = this.playerStates.get(player.socketId);
         const previousFrame = this.previousFrameData.get(player.socketId);
         
-        // Determine what animation should be playing
+        //determine what animation should be playing
         const targetAnimation = this.determineTargetAnimation(player, previousFrame);
         
-        // Check if we can transition to the new animation
-        if (this.canTransitionTo(targetAnimation, currentAnimState, animator)) {
+        //check if we can transition to the new animation
+        if(this.canTransitionTo(targetAnimation, currentAnimState, animator)){
             this.transitionToAnimation(player.socketId, targetAnimation, animator, currentAnimState, player.character);
         }
         
-        // Update the animator
+        //update the animator
         animator.update(deltaTime);
         
-        // Store current frame data for next update
+        //store current frame data for next update
         this.updatePreviousFrameData(player, previousFrame);
     }
     
-    determineTargetAnimation(player, previousFrame) {
-        // PRIORITY 1: Match end states (highest priority)
-        if (player.state === 'victory') {
+    determineTargetAnimation(player, previousFrame){
+        //PRIORITY 1: match end states (highest priority)
+        if(player.state === 'victory'){
             return AnimationStateManager.ANIMATIONS.VICTORY;
         }
-        if (player.state === 'defeated') {
+        if(player.state === 'defeated'){
             return AnimationStateManager.ANIMATIONS.DEFEAT;
         }
         
-        // PRIORITY 2: Combat states - Stunned/Hit
-        // Check both legacy flags and state property
-        if (this.isPlayerStunned(player)) {
+        //PRIORITY 2: combat states - stunned/hit
+        //check both legacy flags and state property
+        if(this.isPlayerStunned(player)){
             return AnimationStateManager.ANIMATIONS.HIT;
         }
         
-        // PRIORITY 3: Combat states - Attacking
-        if (this.isPlayerAttacking(player)) {
+        //PRIORITY 3: combat states - attacking
+        if(this.isPlayerAttacking(player)){
             const attackType = player.currentAttack || player.attackType;
             return AnimationStateManager.ATTACK_MAP[attackType] || AnimationStateManager.ANIMATIONS.IDLE;
         }
         
-        // PRIORITY 4: Combat states - Blocking
-        if (this.isPlayerBlocking(player)) {
+        //PRIORITY 4: combat states - blocking
+        if(this.isPlayerBlocking(player)){
             return AnimationStateManager.ANIMATIONS.BLOCK;
         }
         
-        // PRIORITY 5: Movement states - Dashing
-        if (this.isPlayerDashing(player)) {
+        //PRIORITY 5: movement states - dashing
+        if(this.isPlayerDashing(player)){
             return AnimationStateManager.ANIMATIONS.DASH;
         }
         
-        // PRIORITY 6: Movement states - Airborne
-        if (!this.isPlayerGrounded(player)) {
+        //PRIORITY 6: movement states - airborne
+        if(!this.isPlayerGrounded(player)){
             return AnimationStateManager.ANIMATIONS.JUMP;
         }
         
-        // PRIORITY 7: Movement states - Walking
-        if (this.isPlayerWalking(player)) {
+        //PRIORITY 7: movement states - walking
+        if(this.isPlayerWalking(player)){
             return AnimationStateManager.ANIMATIONS.WALK;
         }
         
-        // DEFAULT: Idle
+        //DEFAULT: Idle
         return AnimationStateManager.ANIMATIONS.IDLE;
     }
 
-    isPlayerStunned(player) {
-        return player.isStunned === true || 
-               player.state === 'stunned' || 
-               player.state === 'hit';
+    isPlayerStunned(player){
+        return player.isStunned === true || player.state === 'stunned' || player.state === 'hit';
     }
 
-    isPlayerAttacking(player) {
-        return player.isAttacking === true && 
-               (player.currentAttack || player.attackType);
+    isPlayerAttacking(player){
+        return player.isAttacking === true && (player.currentAttack || player.attackType);
     }
  
-    isPlayerBlocking(player) {
+    isPlayerBlocking(player){
         return player.isBlocking === true;
     }
 
-    isPlayerDashing(player) {
+    isPlayerDashing(player){
         return player.isDashing === true;
     }
 
-    isPlayerGrounded(player) {
-        // Explicit flag takes precedence
-        if (player.isGrounded !== undefined) {
+    isPlayerGrounded(player){
+        //explicit flag takes precedence
+        if(player.isGrounded !== undefined){
             return player.isGrounded;
         }
         
-        // Fallback: check velocity
+        //fallback: check velocity
         const velocityY = player.velocity?.y || 0;
         return Math.abs(velocityY) < AnimationStateManager.GROUNDED_VELOCITY_THRESHOLD;
     }
 
-    isPlayerWalking(player) {
+    isPlayerWalking(player){
         const velocityX = player.velocity?.x || 0;
         return Math.abs(velocityX) > AnimationStateManager.MOVEMENT_THRESHOLD;
     }
 
-    canTransitionTo(targetAnimation, currentAnimState, animator) {
-        // No transition needed if already playing target
-        if (targetAnimation === currentAnimState.current) {
+    canTransitionTo(targetAnimation, currentAnimState, animator){
+        //no transition needed if already playing target
+        if(targetAnimation === currentAnimState.current){
             return false;
         }
         
-        // Check if current animation must finish
+        //check if current animation must finish
         const isNonInterruptible = AnimationStateManager.NON_INTERRUPTIBLE.has(currentAnimState.current);
         
-        if (isNonInterruptible) {
-            // Can only transition if animation is finished
+        if(isNonInterruptible){
+            //can only transition if animation is finished
             return animator.isAnimationFinished();
         }
         
-        // Can always interrupt interruptible animations
+        //can always interrupt interruptible animations
         return true;
     }
 
-    transitionToAnimation(socketId, targetAnimation, animator, currentAnimState, characterId) {
+    transitionToAnimation(socketId, targetAnimation, animator, currentAnimState, characterId){
         animator.setAnimation(targetAnimation, true);
         
-        console.log(
-            `[AnimationState] ${socketId}: ${currentAnimState.current} -> ${targetAnimation}`
-        );
+        console.log(`[AnimationState] ${socketId}: ${currentAnimState.current} -> ${targetAnimation}`);
         
-        // Play audio when animation successfully starts
+        //play audio when animation successfully starts
         this.playAnimationAudio(socketId, targetAnimation, characterId);
         
         currentAnimState.previous = currentAnimState.current;
         currentAnimState.current = targetAnimation;
     }
 
-    playAnimationAudio(socketId, animationName, characterId) {
-        if (!this.audioManager) {
+    playAnimationAudio(socketId, animationName, characterId){
+        if(!this.audioManager){
             return;
         }
 
-        // Use stored character ID if not provided
-        if (!characterId) {
+        //use stored character ID if not provided
+        if(!characterId){
             characterId = this.playerCharacters.get(socketId);
         }
 
-        if (!characterId) {
+        if(!characterId){
             console.warn(`[AnimationStateManager] No character ID for ${socketId}`);
             return;
         }
 
-        // Map animations to audio actions
+        //map animations to audio actions
         const audioActionMap = {
             'attack1': 'attack1',
             'attack2': 'attack2',
@@ -263,11 +258,12 @@ class AnimationStateManager {
 
         const audioAction = audioActionMap[animationName];
         
-        if (audioAction) {
-            if (audioAction === 'jump') {
+        if(audioAction){
+            if(audioAction === 'jump'){
                 this.audioManager.playJumpSound(characterId);
-            } else {
-                // Attack sounds
+            }
+            else{
+                //attack sounds
                 this.audioManager.playAttackSound(characterId, audioAction);
             }
             
@@ -275,7 +271,7 @@ class AnimationStateManager {
         }
     }
 
-    updatePreviousFrameData(player, previousFrame) {
+    updatePreviousFrameData(player, previousFrame){
         previousFrame.isGrounded = this.isPlayerGrounded(player);
         previousFrame.velocityY = player.velocity?.y || 0;
         previousFrame.velocityX = player.velocity?.x || 0;
@@ -284,15 +280,15 @@ class AnimationStateManager {
         previousFrame.isAttacking = player.isAttacking || false;
     }
     
-    getPlayerAnimator(socketId) {
+    getPlayerAnimator(socketId){
         return this.playerAnimators.get(socketId) || null;
     }
     
-    getPlayerAnimationState(socketId) {
+    getPlayerAnimationState(socketId){
         return this.playerStates.get(socketId) || null;
     }
     
-    forceAnimation(socketId, animationName, reset = true) {
+    forceAnimation(socketId, animationName, reset = true){
         const animator = this.playerAnimators.get(socketId);
         if (!animator) {
             console.warn(`[AnimationStateManager] Cannot force animation: No animator for ${socketId}`);
@@ -302,14 +298,14 @@ class AnimationStateManager {
         animator.setAnimation(animationName, reset);
         
         const state = this.playerStates.get(socketId);
-        if (state) {
+        if(state){
             state.previous = state.current;
             state.current = animationName;
             console.log(`[AnimationState] ${socketId}: Forced animation -> ${animationName}`);
         }
     }
  
-    clear() {
+    clear(){
         this.playerAnimators.clear();
         this.playerStates.clear();
         this.previousFrameData.clear();
@@ -317,7 +313,7 @@ class AnimationStateManager {
         console.log('[AnimationStateManager] Cleared all players');
     }
 
-    getDebugInfo(socketId) {
+    getDebugInfo(socketId){
         return {
             hasAnimator: this.playerAnimators.has(socketId),
             state: this.playerStates.get(socketId),
@@ -327,7 +323,7 @@ class AnimationStateManager {
     }
 }
 
-// Create singleton instance
+//create singleton instance
 const animationStateManager = new AnimationStateManager();
 
 export { AnimationStateManager, animationStateManager };

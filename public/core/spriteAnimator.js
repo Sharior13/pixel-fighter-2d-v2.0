@@ -191,7 +191,7 @@ class SpriteManager {
     }
 }
 
-// Create singleton instance
+//create singleton instance
 const spriteManager = new SpriteManager();
 
 export { SpriteAnimator, spriteManager };

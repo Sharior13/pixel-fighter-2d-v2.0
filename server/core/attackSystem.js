@@ -1,8 +1,8 @@
 const ATTACK_CONFIG = {
     luffy: {
         attack1: {
-            damage: 30,
-            cooldown: 2500,
+            damage: 42,
+            cooldown: 650,
             duration: 560,
             knockback: { x: 8, y: 0 },
             animation: 'attack1',
@@ -11,8 +11,8 @@ const ATTACK_CONFIG = {
             hitboxHeight: 50
         },
         attack2: {
-            damage: 35,
-            cooldown: 3000,
+            damage: 50,
+            cooldown: 850,
             duration: 640,
             knockback: { x: 12, y: 0 },
             animation: 'attack2',
@@ -21,8 +21,8 @@ const ATTACK_CONFIG = {
             hitboxHeight: 60
         },
         basic: {
-            damage: 20,
-            cooldown: 1000,
+            damage: 32,
+            cooldown: 1150,
             duration: 300,
             knockback: { x: 10, y: 0 },
             animation: 'attack_basic',
@@ -56,7 +56,7 @@ const ATTACK_CONFIG = {
     zoro: {
         attack1: {
             damage: 37,
-            cooldown: 2500,
+            cooldown: 500,
             duration: 480,
             knockback: { x: 10, y: 0 },
             animation: 'attack1',
@@ -65,8 +65,8 @@ const ATTACK_CONFIG = {
             hitboxHeight: 60
         },
         attack2: {
-            damage: 52,
-            cooldown: 3000,
+            damage: 45,
+            cooldown: 650,
             duration: 720,
             knockback: { x: 8, y: 0 },
             animation: 'attack2',
@@ -75,8 +75,8 @@ const ATTACK_CONFIG = {
             hitboxHeight: 70
         },
         basic: {
-            damage: 37,
-            cooldown: 1000,
+            damage: 35,
+            cooldown: 1100,
             duration: 600,
             knockback: { x: 12, y: 0 },
             animation: 'attack_basic',
@@ -96,7 +96,7 @@ const ATTACK_CONFIG = {
         },
         ultimate: {
             damage: 195,
-            cooldown: 15000,
+            cooldown: 30000,
             duration: 1200,
             knockback: { x: 50, y: 0 },
             animation: 'attack_ultimate',
@@ -140,7 +140,7 @@ const ATTACK_CONFIG = {
         },
         special: {
             damage: 73,
-            cooldown: 6500,
+            cooldown: 9000,
             duration: 600,
             knockback: { x: 22, y: 0 },
             animation: 'attack_special',
@@ -325,7 +325,7 @@ const ATTACK_CONFIG = {
 
     rukia: {
         attack1: {
-            damage: 50,
+            damage: 38,
             cooldown: 430,
             duration: 480,
             knockback: { x: 8, y: 0 },
@@ -335,7 +335,7 @@ const ATTACK_CONFIG = {
             hitboxHeight: 48
         },
         attack2: {
-            damage: 55,
+            damage: 42,
             cooldown: 600,
             duration: 640,
             knockback: { x: 10, y: 0 },
@@ -345,7 +345,7 @@ const ATTACK_CONFIG = {
             hitboxHeight: 58
         },
         basic: {
-            damage: 40,
+            damage: 28,
             cooldown: 1150,
             duration: 480,
             knockback: { x: 14, y: 0 },
@@ -365,7 +365,7 @@ const ATTACK_CONFIG = {
             hitboxHeight: 72
         },
         ultimate: {
-            damage: 250,
+            damage: 220,
             cooldown: 35000,
             duration: 720,
             knockback: { x: 55, y: 0 },

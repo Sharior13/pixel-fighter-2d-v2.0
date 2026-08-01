@@ -1,86 +1,87 @@
-class AudioManager {
-    constructor() {
+class AudioManager{
+    constructor(){
         this.sfxVolume = 0.9;
         this.musicVolume = 0.8;
         this.masterVolume = 1.0;
         
-        // Audio pools for reusable sound effects
-        this.sfxPool = new Map(); // Map<soundPath, Audio[]>
+        //audio pools for reusable sound effects
+        this.sfxPool = new Map(); //Map<soundPath, Audio[]>
         this.activeMusic = null;
         this.currentMusicPath = null;
         
-        // Pre-load common sounds
+        //pre-load common sounds
         this.preloadedSounds = new Map();
         
-        // Volume fade intervals
+        //volume fade intervals
         this.fadeInterval = null;
         
         console.log('[AudioManager] Initialized');
     }
     
-    // ==================== VOLUME CONTROL ====================
+    //volume controls
     
-    setMasterVolume(volume) {
+    setMasterVolume(volume){
         this.masterVolume = Math.max(0, Math.min(1, volume));
         this.updateAllVolumes();
         console.log(`[AudioManager] Master volume: ${this.masterVolume}`);
     }
     
-    setMusicVolume(volume) {
+    setMusicVolume(volume){
         this.musicVolume = Math.max(0, Math.min(1, volume));
-        if (this.activeMusic) {
+        if(this.activeMusic){
             this.activeMusic.volume = this.musicVolume * this.masterVolume;
         }
         console.log(`[AudioManager] Music volume: ${this.musicVolume}`);
     }
     
-    setSFXVolume(volume) {
+    setSFXVolume(volume){
         this.sfxVolume = Math.max(0, Math.min(1, volume));
         console.log(`[AudioManager] SFX volume: ${this.sfxVolume}`);
     }
     
-    updateAllVolumes() {
-        if (this.activeMusic) {
+    updateAllVolumes(){
+        if(this.activeMusic){
             this.activeMusic.volume = this.musicVolume * this.masterVolume;
         }
     }
     
-    loadSettingsFromStorage() {
-        try {
+    loadSettingsFromStorage(){
+        try{
             const savedSettings = localStorage.getItem('gameSettings');
-            if (savedSettings) {
+            if(savedSettings){
                 const settings = JSON.parse(savedSettings);
                 
-                if (settings.masterVolume !== undefined) {
+                if(settings.masterVolume !== undefined){
                     this.setMasterVolume(settings.masterVolume / 100);
                 }
-                if (settings.musicVolume !== undefined) {
+                if(settings.musicVolume !== undefined){
                     this.setMusicVolume(settings.musicVolume / 100);
                 }
-                if (settings.sfxVolume !== undefined) {
+                if(settings.sfxVolume !== undefined){
                     this.setSFXVolume(settings.sfxVolume / 100);
                 }
                 
                 console.log('[AudioManager] Settings loaded from storage');
             }
-        } catch (error) {
+        }
+        catch(error){
             console.error('[AudioManager] Failed to load settings:', error);
         }
     }
     
-    // ==================== MUSIC PLAYBACK ====================
+    //music playback
     
-    playMusic(musicPath, loop = true, fadeIn = true) {
-        // Don't restart if same music is playing
-        if (this.currentMusicPath === musicPath && this.activeMusic && !this.activeMusic.paused) {
+    playMusic(musicPath, loop = true, fadeIn = true){
+        //dont restart if same music is playing
+        if(this.currentMusicPath === musicPath && this.activeMusic && !this.activeMusic.paused){
             console.log(`[AudioManager] Music already playing: ${musicPath}`);
             return;
         }
         
-        // Stop current music
+        //stop current music
         this.stopMusic(fadeIn);
         
-        try {
+        try{
             const music = new Audio(musicPath);
             music.loop = loop;
             music.volume = fadeIn ? 0 : (this.musicVolume * this.masterVolume);
@@ -90,26 +91,31 @@ class AudioManager {
                 this.activeMusic = music;
                 this.currentMusicPath = musicPath;
                 
-                if (fadeIn) {
+                if(fadeIn){
                     this.fadeInMusic(music);
                 }
-            }).catch(error => {
+            })
+            .catch(error => {
                 console.error('[AudioManager] Failed to play music:', error);
             });
-        } catch (error) {
+        }
+        catch(error){
             console.error('[AudioManager] Error creating music audio:', error);
         }
     }
     
-    stopMusic(fadeOut = true) {
-        if (!this.activeMusic) return;
+    stopMusic(fadeOut = true){
+        if(!this.activeMusic){
+            return;
+        }
         
-        if (fadeOut) {
+        if(fadeOut){
             this.fadeOutMusic(this.activeMusic, () => {
                 this.activeMusic = null;
                 this.currentMusicPath = null;
             });
-        } else {
+        }
+        else{
             this.activeMusic.pause();
             this.activeMusic.currentTime = 0;
             this.activeMusic = null;
@@ -117,14 +123,14 @@ class AudioManager {
         }
     }
     
-    fadeInMusic(music, duration = 1000) {
+    fadeInMusic(music, duration = 1000){
         const targetVolume = this.musicVolume * this.masterVolume;
         const steps = 20;
         const stepDuration = duration / steps;
         const volumeStep = targetVolume / steps;
         let currentStep = 0;
         
-        if (this.fadeInterval) {
+        if(this.fadeInterval){
             clearInterval(this.fadeInterval);
         }
         
@@ -132,21 +138,21 @@ class AudioManager {
             currentStep++;
             music.volume = Math.min(volumeStep * currentStep, targetVolume);
             
-            if (currentStep >= steps) {
+            if(currentStep >= steps){
                 clearInterval(this.fadeInterval);
                 this.fadeInterval = null;
             }
         }, stepDuration);
     }
     
-    fadeOutMusic(music, onComplete, duration = 500) {
+    fadeOutMusic(music, onComplete, duration = 500){
         const startVolume = music.volume;
         const steps = 10;
         const stepDuration = duration / steps;
         const volumeStep = startVolume / steps;
         let currentStep = 0;
         
-        if (this.fadeInterval) {
+        if(this.fadeInterval){
             clearInterval(this.fadeInterval);
         }
         
@@ -154,7 +160,7 @@ class AudioManager {
             currentStep++;
             music.volume = Math.max(startVolume - (volumeStep * currentStep), 0);
             
-            if (currentStep >= steps) {
+            if(currentStep >= steps){
                 clearInterval(this.fadeInterval);
                 this.fadeInterval = null;
                 music.pause();
@@ -164,21 +170,21 @@ class AudioManager {
         }, stepDuration);
     }
     
-    // ==================== MAP MUSIC ====================
+    //map music
     
-    playMapMusic(mapId) {
+    playMapMusic(mapId){
         const musicPath = `../assets/music/${mapId}.ogg`;
         this.playMusic(musicPath, true, true);
     }
     
-    playTitleMusic() {
+    playTitleMusic(){
         this.playMusic('../assets/music/forest.ogg', true, true);
     }
     
-    // ==================== CHARACTER SFX ====================
+    //character sfx
     
-    playSFX(soundPath, volume = 1.0) {
-        try {
+    playSFX(soundPath, volume = 1.0){
+        try{
             const audio = new Audio(soundPath);
             audio.volume = this.sfxVolume * this.masterVolume * volume;
             
@@ -187,13 +193,14 @@ class AudioManager {
             });
             
             return audio;
-        } catch (error) {
+        }
+        catch (error){
             console.error(`[AudioManager] Error creating SFX audio: ${soundPath}`, error);
             return null;
         }
     }
     
-    playCharacterSound(characterId, action) {
+    playCharacterSound(characterId, action){
         const soundMap = {
             'attack1': 'attack',
             'attack2': 'attack',
@@ -205,7 +212,7 @@ class AudioManager {
         };
         
         const soundFile = soundMap[action];
-        if (!soundFile) {
+        if(!soundFile){
             console.warn(`[AudioManager] No sound mapping for action: ${action}`);
             return;
         }
@@ -214,21 +221,21 @@ class AudioManager {
         this.playSFX(soundPath);
     }
     
-    playAttackSound(characterId, attackType) {
+    playAttackSound(characterId, attackType){
         this.playCharacterSound(characterId, attackType);
     }
     
-    playHitSound(characterId) {
+    playHitSound(characterId){
         this.playCharacterSound(characterId, 'hit');
     }
     
-    playJumpSound(characterId) {
+    playJumpSound(characterId){
         this.playCharacterSound(characterId, 'jump');
     }
     
-    // ==================== PRELOADING ====================
+    //preloading
     
-    preloadCharacterSounds(characterId) {
+    preloadCharacterSounds(characterId){
         const sounds = ['attack', 'basic', 'special', 'ultimate', 'hit', 'jump'];
         
         sounds.forEach(sound => {
@@ -243,7 +250,7 @@ class AudioManager {
         console.log(`[AudioManager] Preloaded sounds for: ${characterId}`);
     }
     
-    unloadCharacterSounds(characterId) {
+    unloadCharacterSounds(characterId){
         const sounds = ['attack', 'basic', 'special', 'ultimate', 'hit', 'jump'];
         
         sounds.forEach(sound => {
@@ -254,26 +261,26 @@ class AudioManager {
         console.log(`[AudioManager] Unloaded sounds for: ${characterId}`);
     }
     
-    // ==================== CLEANUP ====================
+    //cleanup
     
-    stopAllSounds() {
+    stopAllSounds(){
         this.stopMusic(false);
         this.preloadedSounds.clear();
         this.sfxPool.clear();
         console.log('[AudioManager] All sounds stopped');
     }
     
-    reset() {
+    reset(){
         this.stopAllSounds();
         console.log('[AudioManager] Reset complete');
     }
 }
 
-// Create singleton instance
+//create singleton instance
 const audioManager = new AudioManager();
 
-// Make globally available
-if (typeof window !== 'undefined') {
+//make globally available
+if(typeof window !== 'undefined'){
     window.AudioManager = audioManager;
 }
 

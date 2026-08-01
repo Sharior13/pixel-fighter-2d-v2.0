@@ -20,12 +20,14 @@ const initializeSocket = (mode, roomId) => {
 
     const username = titleScreenUI.getUsername();
     console.log('[Socket] Sending username:', username);
-    // Start match process
-    if (mode === "quickStart") {
+    //start match process
+    if(mode === "quickStart"){
         socket.emit("findMatch", mode, roomId, username);
-    } else if (mode === "createCustomRoom") {
+    }
+    else if(mode === "createCustomRoom"){
         socket.emit("createCustomRoom", username);
-    } else if (mode === "joinCustomRoom") {
+    }
+    else if(mode === "joinCustomRoom"){
         socket.emit("joinCustomRoom", roomId, username);
     }
 
@@ -88,14 +90,14 @@ const initializeSocket = (mode, roomId) => {
 
         setMap(gameState.map);
         
-        // Play map music
+        //play map music
         if (gameState.map && gameState.map.id) {
             console.log('[Socket] Playing map music:', gameState.map.id);
             audioManager.stopMusic(true);
             audioManager.playMapMusic(gameState.map.id);
         }
         
-        // Find local player's character and preload sounds
+        //find local player's character and preload sounds
         const localPlayer = gameState.players.find(p => p.socketId === socket.id);
         if (localPlayer && localPlayer.character) {
             currentCharacterId = localPlayer.character;
@@ -103,7 +105,7 @@ const initializeSocket = (mode, roomId) => {
             console.log('[Socket] Preloaded sounds for:', localPlayer.character);
         }
         
-        // Preload opponent's sounds too
+        //preload opponent's sounds too
         const opponent = gameState.players.find(p => p.socketId !== socket.id);
         if (opponent && opponent.character) {
             audioManager.preloadCharacterSounds(opponent.character);
@@ -114,7 +116,7 @@ const initializeSocket = (mode, roomId) => {
         initializeRender();
     });
 
-    // Update game state
+    //update game state
     socket.on("gameStateUpdate", (state) => {
         updateGameState(state);
     });
@@ -124,16 +126,16 @@ const initializeSocket = (mode, roomId) => {
         triggerKOAnimation();
     });
 
-    // Handle match end
+    //handle match end
     socket.on("matchEnd", ({ winner, finalStats, reason }) => {
         console.log("Match ended! Winner:", winner);
         console.log("Final stats:", finalStats);
         
         setTimeout(() => {
-           // Stop game loop
+           //stop game loop
            stopRender();
            
-           // Hide battle UI
+           //hide battle UI
            battleUI.hide();
 
             const localPlayer = finalStats.find(p => p.socketId === socket.id);
@@ -150,7 +152,7 @@ const initializeSocket = (mode, roomId) => {
                 reason
             });
             
-            // Clean up character sounds
+            //clean up character sounds
             if (localPlayer && localPlayer.character) {
                 audioManager.unloadCharacterSounds(localPlayer.character);
             }
@@ -158,7 +160,7 @@ const initializeSocket = (mode, roomId) => {
                 audioManager.unloadCharacterSounds(opponent.character);
             }
             
-            // Stop map music and return to title music after fade out
+            //stop map music and return to title music after fade out
             audioManager.stopMusic(true);
             setTimeout(() => {
                 audioManager.playTitleMusic();
@@ -169,7 +171,7 @@ const initializeSocket = (mode, roomId) => {
         currentCharacterId = null;
     });
 
-    // Handle rematch responses
+    //handle rematch responses
     socket.on("rematchAccepted", ({ roomId }) => {
         console.log("Rematch accepted!");
         matchEndScreen.handleRematchAccepted();
@@ -197,7 +199,7 @@ const initializeSocket = (mode, roomId) => {
         battleUI.hide();
     });
 
-    // Send input to backend
+    //send input to backend
     inputInterval = setInterval(() => {
         if (socket) {
             processInputs();
@@ -214,62 +216,63 @@ const processInputs = () => {
 
     inputs.push({ type: "move", direction });
 
-    // Jump (audio will be played by animationStateManager when animation starts)
-    if ((keys.w || keys[' ']) && !actionTriggered.jump) {
+    //jump
+    if((keys.w || keys[' ']) && !actionTriggered.jump){
         inputs.push({ type: "jump" });
         actionTriggered.jump = true;
     }
 
-    // Dash
-    if (keys.Shift && !actionTriggered.dash) {
+    //dash
+    if(keys.Shift && !actionTriggered.dash){
         inputs.push({ type: "dash" });
         actionTriggered.dash = true;
     }
 
-    // Attacks (audio will be played by animationStateManager when animation starts)
-    if (keys.ArrowLeft && !actionTriggered.attack1) {
+    //attacks
+    if(keys.ArrowLeft && !actionTriggered.attack1){
         inputs.push({ type: "attack", ability: "attack1" });
         actionTriggered.attack1 = true;
     }
-    if (keys.ArrowRight && !actionTriggered.attack2) {
+    if(keys.ArrowRight && !actionTriggered.attack2){
         inputs.push({ type: "attack", ability: "attack2" });
         actionTriggered.attack2 = true;
     }
-    if (keys.ArrowUp && !actionTriggered.basic) {
+    if(keys.ArrowUp && !actionTriggered.basic){
         inputs.push({ type: "attack", ability: "basic" });
         actionTriggered.basic = true;
     }
-    if (keys.ArrowDown && !actionTriggered.special) {
+    if(keys.ArrowDown && !actionTriggered.special){
         inputs.push({ type: "attack", ability: "special" });
         actionTriggered.special = true;
     }
-    if (keys.v && !actionTriggered.ultimate) {
+    if(keys.v && !actionTriggered.ultimate){
         inputs.push({ type: "attack", ability: "ultimate" });
         actionTriggered.ultimate = true;
     }
 
-    // Block
-    if (keys.s) {
+    //block
+    if(keys.s){
         if (!actionTriggered.block) {
             inputs.push({ type: "block", activate: true });
             actionTriggered.block = true;
         }
-    } else {
-        if (actionTriggered.block) {
+    }
+    else{
+        if(actionTriggered.block){
             inputs.push({ type: "block", activate: false });
             actionTriggered.block = false;
         }
     }
 
-    // Send all inputs at once
-    if (inputs.length > 0) {
+    //send all inputs at once
+    if(inputs.length > 0){
         socket.emit("playerInput", inputs);
     }
 };
 
-// Handle player disconnect after game ends
+//handle player disconnect after game ends
 const cleanupSocket = () => {
-    if (inputInterval) {
+    if(inputInterval){
         clearInterval(inputInterval);
         inputInterval = null;
     }
@@ -277,7 +280,7 @@ const cleanupSocket = () => {
     inMatch = false;
     currentCharacterId = null;
 
-    if (socket) {
+    if(socket){
         socket.off();
         socket.disconnect();
         socket = null;

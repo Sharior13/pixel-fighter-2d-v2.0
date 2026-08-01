@@ -3,10 +3,10 @@ const CHARACTERS = {
         id: "luffy",
         name: "Luffy",
         stats: {
-            maxHealth: 1250,
-            speed: 5.5,
+            maxHealth: 1150,
+            speed: 5.0,
             jumpForce: 15,
-            weight: 1.0
+            weight: 1.15
         },
         abilities: {
             attack1: { id: "gum_pistol" },
@@ -21,7 +21,7 @@ const CHARACTERS = {
         name: "Zoro",
         stats: {
             maxHealth: 1000,
-            speed: 5.0,
+            speed: 5.5,
             jumpForce: 15,
             weight: 1.1
         },
@@ -37,10 +37,10 @@ const CHARACTERS = {
         id: "naruto",
         name: "Naruto",
         stats: {
-            maxHealth: 1150,
+            maxHealth: 1050,
             speed: 6.0,
             jumpForce: 15,
-            weight: 0.95
+            weight: 1.0
         },
         abilities: {
             attack1: { id: "naruto_barrage" },
@@ -54,10 +54,10 @@ const CHARACTERS = {
         id: "kakashi",
         name: "Kakashi",
         stats: {
-            maxHealth: 1000,
+            maxHealth: 950,
             speed: 6.5,
             jumpForce: 15,
-            weight: 0.9
+            weight: 0.85
         },
         abilities: {
             attack1: { id: "kunai_down" },
@@ -72,9 +72,9 @@ const CHARACTERS = {
         name: "Sasuke",
         stats: {
             maxHealth: 950,
-            speed: 6,
+            speed: 6.0,
             jumpForce: 15,
-            weight: 1
+            weight: 0.95
         },
         abilities: {
             attack1: { id: "sasuke_kick" },
@@ -88,10 +88,10 @@ const CHARACTERS = {
         id: "ichigo",
         name: "Ichigo",
         stats: {
-            maxHealth: 1100,
+            maxHealth: 950,
             speed: 7.0,
             jumpForce: 15,
-            weight: 1.2
+            weight: 1.0
         },
         abilities: {
             attack1: { id: "shikai" },
@@ -106,7 +106,7 @@ const CHARACTERS = {
         name: "Rukia",
         stats: {
             maxHealth: 850,
-            speed: 5.5,
+            speed: 6.5,
             jumpForce: 15,
             weight: 0.7
         },
