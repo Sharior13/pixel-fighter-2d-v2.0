@@ -1,21 +1,35 @@
 const { getCharacterData } = require('../data/characterData.js');
 const { getMapData } = require('../data/maps.js');
-const { AttackHandler } = require('./attackSystem.js');
+const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames } = require('./attackSystem.js');
+const stateMachine = require('./stateMachine.js');
+const { STATES } = stateMachine;
 
 const gameStates = new Map();
 const gameLoopIntervals = new Map();
 
+// ── Step 0 of the combat refactor: frame-based simulation ─────────────
+// gameState.tickCount is now the single source of truth for "what frame are
+// we on" - every combat timer (dash, hitstun, combo window, ability
+// cooldowns) is scheduled against it instead of Date.now(). This is what
+// makes input buffering, cancel windows, and eventually rollback netcode
+// (spec sections 1, 3, 17) possible - none of those hold up on wall-clock
+// timing once network latency gets involved.
+//
+// Match-level bookkeeping (matchDuration countdown, the lastInputTime combo-
+// timeout nicety below) is intentionally left on Date.now() - those aren't
+// frame-precise combat mechanics, just UI/meta timers, so converting them
+// isn't part of this step's scope.
 const GAME_CONFIG = {
-    tickRate: 60,
-    tickInterval: 1000 / 60,
+    tickRate: TICK_RATE,
+    tickInterval: 1000 / TICK_RATE,
     charSelectTimeout: 30000,
     matchDuration: 180000,
     gravity: 0.5,
     inputBufferSize: 10,
     dash:{
         speed: 6,
-        duration: 200, 
-        cooldown: 1000,
+        durationFrames: msToFrames(200),
+        cooldownFrames: msToFrames(1000),
     },
     block: {
         damageReduction: 0.8,
@@ -40,9 +54,8 @@ const initializeGameState = (roomId, playerData, mapId)=>{
         roomId,
         phase: "FIGHT",
         startTime: Date.now(),
-        lastUpdateTime: Date.now(),
         tickCount: 0,
-        
+
         //map configs
         map: {
             id: mapData.id,
@@ -90,22 +103,32 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 },
                 facing: index === 0 ? 1 : -1,
                 currentDirection: 0,
-                
-                //state management
-                state: 'active', // Can be: 'active', 'stunned', 'victory', 'defeated'
-                
-                //flags
+
+                //match-level state (victory/defeated/active) - separate from
+                //combatState below, which is the section-3 per-frame combat
+                //state machine. Match outcome isn't a combat-refactor concern.
+                state: 'active', // Can be: 'active', 'victory', 'defeated'
+
+                //── combat state machine (server/core/stateMachine.js) ──
+                //single authoritative state; isAttacking/isStunned/isDashing/
+                //isDead below are now a MIRROR of this, kept in sync by
+                //setCombatState() - nothing else should assign them directly.
+                ...stateMachine.createInitialCombatState(),
+
+                //legacy flags - synced from combatState, kept so
+                //attackSystem.js and the client payload don't need to change
+                //this step (sprite/audio retargeting is sections 4-5)
                 isGrounded: false,
                 isJumping: false,
                 isAttacking: false,
                 isStunned: false,
-                stunEndTime: 0,
+                stunEndFrame: 0,
                 isDead: false,
                 isDashing: false,     
                 dashTimer: 0,        
                 dashCooldownTimer: 0,
                 isBlocking: false,      
-                blockActivatedTime: 0,
+                blockActivatedFrame: 0,
                 
                 //stats from character data
                 health: charData.stats.maxHealth,
@@ -114,7 +137,8 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 jumpForce: charData.stats.jumpForce,
                 weight: charData.stats.weight,
                 
-                //abilities and cooldowns
+                //abilities and cooldowns (frame counts now, not ms - see
+                //getClientGameState() for the ms conversion sent to clients)
                 abilities: charData.abilities,
                 cooldowns: {
                     dash: 0,
@@ -129,7 +153,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 
                 //combat stats
                 combo: 0,
-                comboWindowEnd: 0,
+                comboWindowEndFrame: 0,
                 damage: 0,
                 damageReceived: 0,
                 killCount: 0,
@@ -168,11 +192,15 @@ const getGameState = (roomId)=>{
 };
 
 
-//update cooldown
-const updateCooldowns = (player, deltaTime)=>{
+//update cooldowns - decrements every ability cooldown by exactly one frame
+//per tick. (Previously this ran once here AND once again inline in gameTick
+//with a ms deltaTime, which double-decremented every cooldown every tick -
+//found during this pass's audit per the plan's section 1 note about
+//auditing issues while touching this code; fixed as part of the rewrite.)
+const updateCooldowns = (player)=>{
     Object.keys(player.cooldowns).forEach(key => {
         if(player.cooldowns[key] > 0){
-            player.cooldowns[key] = Math.max(0, player.cooldowns[key] - deltaTime);
+            player.cooldowns[key] = Math.max(0, player.cooldowns[key] - 1);
         }
     });
 };
@@ -217,8 +245,8 @@ const processInput = (roomId, socketId, input)=>{
 
 //apply to player movement
 const applyMovement = (player, players, direction, deltaTime, mapBoundaries)=>{
-    if(player.isStunned || player.isAttacking){
-        player.velocity.x = 0; // Clear horizontal velocity while stunned
+    if(!stateMachine.canMove(player.combatState)){
+        player.velocity.x = 0; // Clear horizontal velocity while attacking/stunned/locked
         return;
     }
     
@@ -295,7 +323,7 @@ const applyMovement = (player, players, direction, deltaTime, mapBoundaries)=>{
 
 
 const applyJump = (player)=>{
-    if(player.isGrounded && !player.isJumping && !player.isStunned && !player.isAttacking){
+    if(player.isGrounded && !player.isJumping && stateMachine.canJump(player.combatState)){
         player.velocity.y = -player.jumpForce;
         player.isGrounded = false;
         player.isJumping = true;
@@ -318,17 +346,17 @@ const applyGravity = (player, deltaTime, groundY)=>{
     }
 };
 
-const applyDash = (player) => {
-    // Can't dash if already dashing, attacking, stunned, or on cooldown
-    if(player.isDashing || player.isAttacking || player.isStunned || 
+const applyDash = (player, currentFrame) => {
+    // Can't dash if already dashing, attacking, stunned/locked, or on cooldown
+    if(!stateMachine.canDash(player.combatState) ||
        player.dashCooldownTimer > 0 || player.isBlocking || player.velocity.x == 0){
         return { success: false, reason: 'cannot_dash' };
     }
     
     // Activate dash
-    player.isDashing = true;
-    player.dashTimer = GAME_CONFIG.dash.duration;
-    player.dashCooldownTimer = GAME_CONFIG.dash.cooldown;
+    stateMachine.setCombatState(player, STATES.DASHING, currentFrame);
+    player.dashTimer = GAME_CONFIG.dash.durationFrames;
+    player.dashCooldownTimer = GAME_CONFIG.dash.cooldownFrames;
     
     console.log(`[GameState] Player ${player.socketId} dashed!`);
 
@@ -337,9 +365,9 @@ const applyDash = (player) => {
 
 const applyBlock = (player, activate) => {
     if(activate){
-        if(!player.isBlocking && !player.isAttacking && !player.isStunned){
+        if(!player.isBlocking && stateMachine.canStartBlock(player.combatState)){
             player.isBlocking = true;
-            player.blockActivatedTime = Date.now();
+            player.blockActivatedFrame = player.combatStateEnteredFrame; // approximate, block isn't a combatState itself
             console.log(`[GameState] Player ${player.socketId} started blocking`);
         }
     } 
@@ -360,11 +388,15 @@ const gameTick = (roomId, io)=>{
         return;
     }
     
-    const currentTime = Date.now();
-    const deltaTime = currentTime - gameState.lastUpdateTime;
-    gameState.attackHandler.updateAttacks(gameState, deltaTime);
-    gameState.lastUpdateTime = currentTime;
+    // frame-based combat timing: the server tick IS "one frame" (fixed
+    // 60Hz interval below), so tickCount is incremented once per call and
+    // used directly as the frame counter everywhere else - no more
+    // Date.now()-derived deltaTime for combat scheduling.
     gameState.tickCount++;
+    const currentFrame = gameState.tickCount;
+    gameState.attackHandler.updateAttacks(gameState);
+
+    const currentTime = Date.now(); // wall-clock, only for the non-combat timers noted below
     
     //check if match time expired
     const elapsedTime = currentTime - gameState.startTime;
@@ -407,7 +439,7 @@ const gameTick = (roomId, io)=>{
 
             winner.state = 'victory';
             loser.state = 'defeated';
-            loser.isDead = true;
+            // loser.isDead is already true (set by the state machine when health hit 0)
 
             return { gameEnded: true, winner: winner.socketId, reason: 'ko' };
         }
@@ -426,35 +458,29 @@ const gameTick = (roomId, io)=>{
             return;
         }
 
-        Object.keys(player.cooldowns).forEach(ability => {
-            if (player.cooldowns[ability] > 0) {
-                player.cooldowns[ability] -= deltaTime;
-                if (player.cooldowns[ability] < 0) {
-                    player.cooldowns[ability] = 0;
-                }
-            }
-        });
-        if (player.isStunned && player.stunEndTime && currentTime >= player.stunEndTime) {
-            player.isStunned = false;
-            player.stunEndTime = 0;
-            player.state = 'active';
+        //update cooldowns - exactly once per tick (see updateCooldowns() note re: the old double-decrement)
+        updateCooldowns(player);
+
+        if (player.isStunned && player.stunEndFrame && currentFrame >= player.stunEndFrame) {
+            stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
+            player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
             console.log(`[GameState] ${player.socketId} stun ended`);
         }
-        //update cooldowns
-        updateCooldowns(player, deltaTime);
 
         if(player.dashTimer > 0){
-            player.dashTimer -= deltaTime;
+            player.dashTimer -= 1;
             if(player.dashTimer <= 0){
                 player.dashTimer = 0;
-                player.isDashing = false;
+                if (player.combatState === STATES.DASHING) {
+                    stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
+                }
             }
         }
 
         //update dash cooldown
         if(player.dashCooldownTimer > 0){
-            player.dashCooldownTimer -= deltaTime;
+            player.dashCooldownTimer -= 1;
             if(player.dashCooldownTimer <= 0){
                 player.dashCooldownTimer = 0;
             }
@@ -485,7 +511,7 @@ const gameTick = (roomId, io)=>{
 
         //apply latest movement
         if(latestMovement){
-            applyMovement(player, gameState.players, latestMovement.direction, deltaTime, gameState.map.boundaries);
+            applyMovement(player, gameState.players, latestMovement.direction, null, gameState.map.boundaries);
             player.currentDirection = latestMovement.direction;
         } else {
             if (player.isStunned && !player.isAttacking) {
@@ -516,14 +542,21 @@ const gameTick = (roomId, io)=>{
                     applyBlock(player, input.activate);
                     break;
                 case 'dash':
-                    applyDash(player);
+                    applyDash(player, currentFrame);
                     break;
             }
         });
         
-        applyGravity(player, deltaTime, gameState.map.groundY);
+        applyGravity(player, null, gameState.map.groundY);
+
+        //classify idle/walking/jumping/airborne now that this tick's physics
+        //and inputs have both been applied (event-driven states - attack_*,
+        //hitstun, dashing, dead - manage their own transitions above and are
+        //left alone by this call)
+        stateMachine.resolveMovementState(player, currentFrame);
         
-        //reset combo on no recent input
+        //reset combo on no recent input (wall-clock: this is about real input
+        //cadence over the network, not simulation timing, so it stays as-is)
         if(currentTime - player.lastInputTime > 2000){
             player.combo = 0;
         }
@@ -570,7 +603,7 @@ const gameTick = (roomId, io)=>{
                     isStunned: p.isStunned,
                     isDead: p.isDead,
                     state: p.state, // 'victory' or 'defeated'
-                    cooldowns: p.cooldowns,
+                    cooldowns: msCooldowns(p.cooldowns),
                     combo: p.combo,
                     lastProcessedSeq: p.lastProcessedSeq ?? -1
                 })),
@@ -681,6 +714,20 @@ const endMatch = (roomId, io, winner = null)=>{
     }, 5000);
 };
 
+//cooldowns are tracked in frames internally (see the note at the top of this
+//file) but the client/UI still expects milliseconds (battleUI.js's ultimate
+//bar divides by a fixed 30000ms, and the cooldown readout does cd/1000 for
+//seconds) - that wire format is owned by build-order item 13 (meter economy
+/// Ultimate bar repurpose), not this step, so this converts back to the same
+//ms values the client has always received.
+const msCooldowns = (cooldowns) => {
+    const out = {};
+    Object.keys(cooldowns).forEach(key => {
+        out[key] = cooldowns[key] * FRAME_MS;
+    });
+    return out;
+};
+
 //client game state
 const getClientGameState = (gameState)=>{
     return {
@@ -708,12 +755,12 @@ const getClientGameState = (gameState)=>{
             attackFrame: p.attackFrame || 0,
             isBlocking: p.isBlocking,
             isDashing: p.isDashing, 
-            dashTimer: p.dashTimer,
-            dashCooldownTimer: p.dashCooldownTimer,
+            dashTimer: p.dashTimer * FRAME_MS,
+            dashCooldownTimer: p.dashCooldownTimer * FRAME_MS,
             isStunned: p.isStunned,
             isDead: p.isDead,
             state: p.state || 'active', // FIXED: Include state for animations
-            cooldowns: p.cooldowns,
+            cooldowns: msCooldowns(p.cooldowns),
             combo: p.combo,
             lastProcessedSeq: p.lastProcessedSeq ?? -1
         })),
