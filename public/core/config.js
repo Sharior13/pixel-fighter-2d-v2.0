@@ -1,14 +1,23 @@
 // Backend URL. Auto-picks local vs. deployed so you don't have to hand-edit
 // this file every time you switch between testing and deploying.
 //
-// - Running the frontend from localhost/127.0.0.1 (e.g. `npx serve public`,
-//   `wrangler pages dev public`) -> connects to your local backend.
+// - Running the frontend from localhost/127.0.0.1/a LAN IP (e.g. `npx serve public`,
+//   `wrangler pages dev public`, or opening it on your phone via your laptop's
+//   192.168.x.x address) -> connects to your local backend, using whatever
+//   hostname the page itself was loaded from (so it works from other devices too).
 // - Anything else (Cloudflare Pages, etc.) -> connects to the deployed Render backend.
-const LOCAL_SERVER_URL = "http://localhost:2000";
-const PROD_SERVER_URL = "www.pixel.shrestha-saurav.com.np";
+const LOCAL_SERVER_PORT = 2000;
+const PROD_SERVER_URL = "https://www.pixel.shrestha-saurav.com.np";
 
-const isLocal = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-const SERVER_URL = isLocal ? LOCAL_SERVER_URL : PROD_SERVER_URL;
+const isLocalHostname =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(window.location.hostname) ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(window.location.hostname);
+
+const SERVER_URL = isLocalHostname
+    ? `http://${window.location.hostname}:${LOCAL_SERVER_PORT}`
+    : PROD_SERVER_URL;
 
 // Where character sprites and music are hosted (Cloudflare R2 bucket, custom
 // domain or r2.dev subdomain). Used for the "characters/..." and "music/..."
@@ -26,5 +35,3 @@ const SERVER_URL = isLocal ? LOCAL_SERVER_URL : PROD_SERVER_URL;
 const ASSET_BASE_URL = "https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d";
 
 export { SERVER_URL, ASSET_BASE_URL };
-
-
