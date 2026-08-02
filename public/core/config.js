@@ -5,6 +5,6 @@
 // Leave SERVER_URL as an empty string to connect to whatever origin served
 // this page (useful for local dev when the server also serves /public, e.g.
 // http://localhost:2000).
-const SERVER_URL = "https://pixel-fighter-2d-v2-0.onrender.com/";
+const SERVER_URL = "www.pixel.shrestha-saurav.com.np";
 
 export { SERVER_URL };
