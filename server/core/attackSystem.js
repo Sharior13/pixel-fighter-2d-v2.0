@@ -378,6 +378,28 @@ const ATTACK_CONFIG = {
     },
 };
 
+// ── Combo system tuning ──────────────────────────────────────────────
+const COMBO_WINDOW_MS = 500;     // time after a hit connects to land the next hit and keep the chain alive
+const MAX_COMBO_HITS = 8;        // multiplier and stun stop shrinking past this many hits
+const DAMAGE_DECAY_PER_HIT = 0.08;  // each hit after the 1st deals 8% less damage
+const MIN_DAMAGE_MULTIPLIER = 0.4;  // damage never scales below 40%
+const BASE_HITSTUN_MS = 300;
+const STUN_DECAY_PER_HIT = 25;   // each hit after the 1st stuns 25ms less
+const MIN_HITSTUN_MS = 120;      // hitstun never drops below this, so late-combo hits still connect
+const CANCEL_THRESHOLD = 0.55;   // once a hit lands, the attacker is freed at 55% into the animation instead of waiting for the full duration
+
+function getComboDamageMultiplier(comboCount) {
+    const hitsIntoCombo = Math.min(comboCount, MAX_COMBO_HITS) - 1;
+    const multiplier = 1 - hitsIntoCombo * DAMAGE_DECAY_PER_HIT;
+    return Math.max(multiplier, MIN_DAMAGE_MULTIPLIER);
+}
+
+function getComboStunDuration(comboCount) {
+    const hitsIntoCombo = Math.min(comboCount, MAX_COMBO_HITS) - 1;
+    const stun = BASE_HITSTUN_MS - hitsIntoCombo * STUN_DECAY_PER_HIT;
+    return Math.max(stun, MIN_HITSTUN_MS);
+}
+
 class AttackHandler {
     constructor() {
         this.activeAttacks = new Map(); // Map<attackId, attackData>
@@ -413,6 +435,8 @@ class AttackHandler {
         
         // Create attack instance
         const attackId = `attack_${this.attackIdCounter++}`;
+        player.currentAttackId = attackId;
+
         const attackData = {
             id: attackId,
             attackerId: player.socketId,
@@ -456,13 +480,38 @@ class AttackHandler {
             if (attackData.config.dashDistance && !attackData.dashComplete && elapsed < attackData.config.duration * 0.5) {
                 this.handleUltimateDash(attacker, attackData, deltaTime, gameState);
             }
-            
+
+            // Hit-confirm cancel: once this attack has landed and we're far enough into
+            // recovery, free the attacker to act again while this instance finishes quietly
+            // in the background (dash/cleanup still run their course below).
+            if (!attackData.recoveryReleased && attackData.hasHit &&
+                elapsed >= attackData.config.duration * CANCEL_THRESHOLD) {
+                attackData.recoveryReleased = true;
+                if (attacker.currentAttackId === attackId) {
+                    attacker.isAttacking = false;
+                    attacker.currentAttack = null;
+                }
+            }
             
             // Check if attack is complete
             if (elapsed >= attackData.config.duration) {
-                attacker.isAttacking = false;
-                attacker.currentAttack = null;
                 attacksToRemove.push(attackId);
+
+                // Only clear the attacker's active-attack fields if they still point at THIS
+                // instance — if an early cancel let them start a new attack already, that
+                // newer instance owns these fields now and must not be touched here.
+                if (attacker.currentAttackId === attackId) {
+                    attacker.isAttacking = false;
+                    attacker.currentAttack = null;
+                    attacker.currentAttackId = null;
+                }
+
+                // A whiffed attack breaks the combo chain
+                if (!attackData.hasHit) {
+                    attacker.combo = 0;
+                    attacker.comboWindowEnd = 0;
+                }
+
                 console.log(`[AttackHandler] Attack ${attackId} completed`);
             }
         }
@@ -526,9 +575,19 @@ class AttackHandler {
     
     applyHit(gameState, attacker, target, attackData) {
         const config = attackData.config;
-        
-        // Apply damage (reduced if blocking)
-        const damage = target.isBlocking ? config.damage * 0.3 : config.damage;
+        const now = Date.now();
+
+        // Continue the combo if we're still inside the window from the attacker's last hit,
+        // otherwise this hit starts a fresh combo at count 1.
+        const isComboContinuation = attacker.comboWindowEnd && now <= attacker.comboWindowEnd;
+        attacker.combo = isComboContinuation ? attacker.combo + 1 : 1;
+        attacker.comboWindowEnd = now + COMBO_WINDOW_MS;
+
+        const comboMultiplier = getComboDamageMultiplier(attacker.combo);
+
+        // Apply damage (reduced if blocking, then scaled by combo decay)
+        const baseDamage = target.isBlocking ? config.damage * 0.3 : config.damage;
+        const damage = baseDamage * comboMultiplier;
         target.health -= damage;
         target.damageReceived += damage;
         
@@ -536,26 +595,34 @@ class AttackHandler {
         if (!target.isBlocking) {
             const knockbackDir = target.position.x > attacker.position.x ? 1 : -1;
             target.velocity.x = config.knockback.x * knockbackDir;
-            target.velocity.y = -Math.abs(config.knockback.y);
-            target.isGrounded = false;
+
+            if (config.knockback.y > 0) {
+                target.velocity.y = -Math.abs(config.knockback.y);
+                target.isGrounded = false;
+            }
             
-            // Apply hitstun
+            // Apply hitstun, shortened as the combo goes on so long chains eventually let the victim escape
             target.isStunned = true;
-            target.stunEndTime = Date.now() + 300;
+            target.stunEndTime = now + getComboStunDuration(attacker.combo);
         }
+
+        // Getting hit ends whatever combo the target was building
+        target.combo = 0;
+        target.comboWindowEnd = 0;
         
         // Check for death
         if (target.health <= 0) {
             target.health = 0;
             target.isDead = true;
             attacker.killCount++;
+            attacker.combo = 0;
+            attacker.comboWindowEnd = 0;
         }
         
         // Update attacker stats
         attacker.damage += damage;
-        attacker.combo++;
         
-        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage`);
+        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
     }
     
     clear() {

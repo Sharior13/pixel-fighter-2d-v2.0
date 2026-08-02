@@ -8,7 +8,7 @@ const { socketHandler } = require('./networking/socketHandler.js');
 const port = 2000;
 const app = express();
 const server = createServer(app);
-const io = new Server(server, { pingInterval: 2000, pingTimeout: 5000, autoConnect: false});
+const io = new Server(server, { pingInterval: 5000, pingTimeout: 20000, autoConnect: false });
 
 app.use(express.static('public'));
 

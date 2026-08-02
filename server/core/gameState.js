@@ -125,16 +125,24 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                     ultimate: 0,
                 },
                 currentAttack: null,
+                currentAttackId: null,
                 
                 //combat stats
                 combo: 0,
+                comboWindowEnd: 0,
                 damage: 0,
                 damageReceived: 0,
                 killCount: 0,
                 
                 //input buffer
                 inputBuffer: [],
-                lastInputTime: 0
+                lastInputTime: 0,
+
+                //highest client input sequence number this player's inputs have been
+                //applied through - echoed back to the client in getClientGameState()
+                //so it knows which locally-predicted inputs are now confirmed and can
+                //be dropped from its replay buffer (see client render.js reconcileLocalPlayer)
+                lastProcessedSeq: -1
             };
         }),
         
@@ -190,6 +198,7 @@ const processInput = (roomId, socketId, input)=>{
         direction: input.direction || 0,
         ability: input.ability || null,
         activate: input.activate !== undefined ? input.activate : null, 
+        seq: typeof input.seq === 'number' ? input.seq : undefined,
         timestamp: Date.now()
     };
     
@@ -459,6 +468,13 @@ const gameTick = (roomId, io)=>{
         while(player.inputBuffer.length > 0){
             const input = player.inputBuffer.shift();
 
+            //inputs are shifted out in the order they were pushed (client sends them
+            //with a monotonically increasing seq), so the last one processed this
+            //tick is always the highest seq seen so far
+            if(typeof input.seq === 'number'){
+                player.lastProcessedSeq = input.seq;
+            }
+
             if(input.type === 'move'){
                 latestMovement = input;
             }
@@ -536,9 +552,13 @@ const gameTick = (roomId, io)=>{
                     socketId: p.socketId,
                     playerIndex: p.playerIndex,
                     character: p.character,
+                    username: p.username || "Player",
+                    size: p.size,
                     position: p.position,
                     velocity: p.velocity,
                     facing: p.facing,
+                    speed: p.speed,          // ADDED
+                    jumpForce: p.jumpForce,  // ADDED
                     health: p.health,
                     maxHealth: p.maxHealth,
                     isGrounded: p.isGrounded,
@@ -551,7 +571,8 @@ const gameTick = (roomId, io)=>{
                     isDead: p.isDead,
                     state: p.state, // 'victory' or 'defeated'
                     cooldowns: p.cooldowns,
-                    combo: p.combo
+                    combo: p.combo,
+                    lastProcessedSeq: p.lastProcessedSeq ?? -1
                 })),
                 timeRemaining: gameState.timeRemaining
             });
@@ -589,7 +610,7 @@ const gameTick = (roomId, io)=>{
     }
     
     //emit state update
-    if(gameState.tickCount % 1 === 0) {
+    if(gameState.tickCount % 3 === 0) {
         io.to(roomId).emit('gameStateUpdate', getClientGameState(gameState));
     }
 };
@@ -677,6 +698,8 @@ const getClientGameState = (gameState)=>{
             position: p.position,
             velocity: p.velocity,
             facing: p.facing,
+            speed: p.speed,          // ADDED
+            jumpForce: p.jumpForce,  // ADDED
             health: p.health,
             maxHealth: p.maxHealth,
             isGrounded: p.isGrounded,
@@ -685,11 +708,14 @@ const getClientGameState = (gameState)=>{
             attackFrame: p.attackFrame || 0,
             isBlocking: p.isBlocking,
             isDashing: p.isDashing, 
+            dashTimer: p.dashTimer,
+            dashCooldownTimer: p.dashCooldownTimer,
             isStunned: p.isStunned,
             isDead: p.isDead,
             state: p.state || 'active', // FIXED: Include state for animations
             cooldowns: p.cooldowns,
-            combo: p.combo
+            combo: p.combo,
+            lastProcessedSeq: p.lastProcessedSeq ?? -1
         })),
         projectiles: gameState.projectiles,
         effects: gameState.effects

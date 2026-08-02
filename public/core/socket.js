@@ -1,7 +1,7 @@
 import { openCharacterSelect, showOpponentPreview } from "../ui/characterSelect.js";
 import { keys, actionTriggered } from "./input.js";
 import { titleScreenUI } from "../ui/titleScreen.js";
-import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation  } from "./render.js";
+import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, predictTick } from "./render.js";
 import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
@@ -11,12 +11,27 @@ let inMatch = false;
 let inputInterval = null;
 let currentCharacterId = null;
 
+// client-side prediction bookkeeping
+let inputSequence = 0;
+let currentTick = 0; // increments once per processInputs() call, groups same-tick inputs
+const pendingInputs = []; // inputs sent to the server but not yet confirmed (see render.js reconcileLocalPlayer)
+
+// backpressure: if we've got this many unacked ticks sitting in pendingInputs, the server
+// (or the network) can't keep up - stop flooding the socket with redundant idle "move"
+// batches so pings/gameStateUpdates/real actions actually have room to get through.
+// Meaningful actions (jump/dash/attack/block) are always sent regardless, since those
+// can't be silently superseded the way a stale "move: 0" can.
+const MAX_UNACKED_TICKS = 15; // ~250ms of backlog at 60Hz
+
 const initializeSocket = (mode, roomId) => {
     if (socket) {
         return;
     }
 
-    socket = io();
+    socket = io({ transports: ["websocket"], upgrade: false, timeout: 60000 });
+
+    socket.on("disconnect", (reason) => console.log("[Socket] disconnected:", reason));
+    socket.on("connect_error", (err) => console.log("[Socket] connect_error:", err.message));
 
     const username = titleScreenUI.getUsername();
     console.log('[Socket] Sending username:', username);
@@ -85,6 +100,17 @@ const initializeSocket = (mode, roomId) => {
     });
 
     socket.on("startMatch", (gameState) => {
+        // The client has been sending seq/tick-tagged inputs since initializeSocket() was
+        // called (queue + character select), but the server ignores all of those (match
+        // phase isn't FIGHT yet), so their seq numbers never become lastProcessedSeq. If we
+        // don't wipe that backlog here, the first reconciliation of the real match has to
+        // work through a pile of stale pre-match inputs against a freshly-initialized
+        // server gameState (whose lastProcessedSeq starts back at -1) - same thing happens
+        // on every rematch too, since that doesn't go through cleanupSocket().
+        inputSequence = 0;
+        currentTick = 0;
+        pendingInputs.length = 0;
+
         document.getElementById("character-select").style.display = "none";
         canvas.style.backgroundImage = 'none';
 
@@ -266,7 +292,40 @@ const processInputs = () => {
 
     //send all inputs at once
     if(inputs.length > 0){
-        socket.emit("playerInput", inputs);
+        //tag with a monotonic seq (per input, for server lastProcessedSeq acknowledgement)
+        //AND a tick id (shared by every input generated in this single call) so the client
+        //can replay gravity/timers exactly once per real tick during reconciliation, even
+        //when a tick produced multiple inputs (e.g. "move" + "jump" together).
+        const tickId = currentTick++;
+        const seqInputs = inputs.map(input => ({ ...input, seq: inputSequence++, tick: tickId }));
+
+        //keep a copy so render.js can replay whatever the server hasn't confirmed yet
+        seqInputs.forEach(input => pendingInputs.push(input));
+
+        //apply immediately client-side for zero-latency movement feedback - this always
+        //runs regardless of network conditions, so the local player stays responsive
+        //even while we're throttling what we actually send below.
+        predictTick(seqInputs);
+
+        //backpressure: on a bad connection, pendingInputs can grow much faster than the
+        //server can ack it. Flooding the socket with more messages in that state only
+        //makes things worse - it starves ping/pong and gameStateUpdate of bandwidth,
+        //which is what was causing "ping timeout" disconnects under 3G throttling.
+        //Redundant IDLE "move" batches (direction === 0) are safe to skip sending, since
+        //a later idle tick supersedes an earlier one. An ACTIVE move tick (direction !== 0)
+        //is NOT safe to skip: each move tick is a one-time position delta applied on the
+        //server (see prediction.js/gameState.js), not a persistent state the server free-runs
+        //with - dropping an active move tick permanently loses that tick's displacement
+        //server-side rather than just delaying it, causing real desync (not just a slower
+        //ack) that only surfaces once reconciliation catches up. Only genuinely idle ticks
+        //are droppable; real actions (jump/dash/attack/block) and active movement always
+        //get sent immediately since they can't be silently superseded.
+        const isIdleOnly = inputs.length === 1 && inputs[0].type === "move" && inputs[0].direction === 0;
+        const isBackedUp = pendingInputs.length > MAX_UNACKED_TICKS;
+
+        if(!isIdleOnly || !isBackedUp){
+            socket.emit("playerInput", seqInputs);
+        }
     }
 };
 
@@ -280,6 +339,11 @@ const cleanupSocket = () => {
     inMatch = false;
     currentCharacterId = null;
 
+    //reset prediction state for the next match
+    inputSequence = 0;
+    currentTick = 0;
+    pendingInputs.length = 0;
+
     if(socket){
         socket.off();
         socket.disconnect();
@@ -289,4 +353,4 @@ const cleanupSocket = () => {
     console.log('[Socket] Cleaned up socket connection');
 };
 
-export { initializeSocket, cleanupSocket, socket };
+export { initializeSocket, cleanupSocket, socket, pendingInputs };

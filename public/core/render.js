@@ -1,10 +1,11 @@
-import { socket } from "./socket.js";
+import { socket, pendingInputs } from "./socket.js";
 import { spriteManager } from "./spriteAnimator.js";
 import { characterSpriteConfigs } from "../data/characterSprites.js";
 import { animationStateManager } from "./animationStateManager.js";
 import { battleUI } from "../ui/battleUI.js";
 import { getPlayerUsername } from "../ui/titleScreen.js";
 import { audioManager } from "./audioManager.js";
+import { simulateTick } from "./prediction.js";
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -36,10 +37,36 @@ const KO_DISPLAY_DURATION = 2000; //show KO for 2 seconds
 //track player health for hit sound detection
 let playerHealthTracker = new Map(); //Map<socketId, previousHealth>
 
+//track combo counts to detect new hits and trigger a pop animation
+let playerComboTracker = new Map(); //Map<socketId, { count, poppedAt }>
+const COMBO_POP_DURATION = 220; //ms - how long the scale-up pop lasts after a new hit
 const camera = {
     x: 0,
     y: 0
 };
+
+// ---- client-side prediction / reconciliation state ----
+// predictedLocalPlayer is a locally-simulated mirror of the local player, advanced
+// immediately on input (see predictTick) and snapped back onto server truth + replayed
+// on every gameStateUpdate (see reconcileLocalPlayer). Only movement-related fields are
+// predicted; health/combat/cooldowns always come straight from the server.
+let predictedLocalPlayer = null;
+
+// DEBUG ISOLATION SWITCH: set true to render the local player straight from raw server
+// state (same path the opponent already uses), completely bypassing predictedLocalPlayer.
+// If the flicker still happens with this on, it's proven to be unrelated to prediction/
+// reconciliation - and we should look at animationStateManager/spriteAnimator's frame
+// logic or characterSprites.js's animation config instead.
+const DEBUG_DISABLE_PREDICTION = false;
+const FIXED_DT = 1000 / 60; // matches server GAME_CONFIG.tickInterval
+
+// ---- opponent interpolation state ----
+// we intentionally render the opponent slightly in the past (INTERP_DELAY) so we always
+// have two real server snapshots to smoothly interpolate between, instead of snapping
+// on every network update.
+const INTERP_DELAY = 100; // ms
+let stateBuffer = []; // [{ state, receivedAt }]
+const STATE_BUFFER_MAX = 30;
 
 const setMap = (mapData)=>{
     currentMap = mapData;
@@ -73,6 +100,180 @@ const setMap = (mapData)=>{
         bgImg.src = `../assets/background/${currentMap.id}.gif`;
     }
 };
+// apply a freshly-generated batch of local inputs to the predicted player immediately,
+// so movement feels instant instead of waiting for the server round-trip.
+// called from socket.js's processInputs(), once per input tick (same 60Hz cadence as
+// the server's game loop).
+const predictTick = (inputs) => {
+    if (!predictedLocalPlayer) {
+        return;
+    }
+
+    const mapBoundaries = currentMap ? currentMap.boundaries : null;
+    const groundY = currentMap ? currentMap.groundY : predictedLocalPlayer.position.y;
+    const opponent = currentGameState ? currentGameState.players.find(p => p.socketId !== socket.id) : null;
+
+    simulateTick(predictedLocalPlayer, inputs, mapBoundaries, groundY, FIXED_DT, opponent);
+};
+
+// reconcile the predicted local player against a fresh authoritative server state:
+// snap the predicted object to server truth, drop confirmed inputs, then replay
+// whatever inputs the server hasn't processed yet.
+const reconcileLocalPlayer = (state) => {
+    const serverPlayer = state.players.find(p => p.socketId === socket.id);
+    if (!serverPlayer) {
+        return;
+    }
+
+    if (!predictedLocalPlayer) {
+        predictedLocalPlayer = structuredClone(serverPlayer);
+        return;
+    }
+
+    // TEMP DEBUG: capture the predicted position BEFORE snapping, i.e. what we locally
+    // believed our position was going into this reconciliation. Comparing this to
+    // serverPlayer.position is the actual measure of prediction error for the ticks the
+    // server just confirmed. (Previously this was captured after the snap+replay below,
+    // which instead compared post-replay predicted position - which legitimately includes
+    // unconfirmed pending inputs - against the raw un-replayed server snapshot, so it
+    // "drifted" on essentially every update whenever any input was in flight.)
+    const preSnapX = predictedLocalPlayer.position.x;
+    const preSnapY = predictedLocalPlayer.position.y;
+    const driftX = Math.abs(preSnapX - serverPlayer.position.x);
+    const driftY = Math.abs(preSnapY - serverPlayer.position.y);
+    if (driftX > 5 || driftY > 5) {
+        console.warn(`[Reconcile] drift: x=${driftX.toFixed(1)} y=${driftY.toFixed(1)}`);
+    }
+
+    //snap authoritative fields onto the predicted mirror
+    predictedLocalPlayer.position = { ...serverPlayer.position };
+    predictedLocalPlayer.velocity = { ...serverPlayer.velocity };
+    predictedLocalPlayer.size = serverPlayer.size;
+    predictedLocalPlayer.facing = serverPlayer.facing;
+    predictedLocalPlayer.speed = serverPlayer.speed;
+    predictedLocalPlayer.jumpForce = serverPlayer.jumpForce;
+    predictedLocalPlayer.isGrounded = serverPlayer.isGrounded;
+    predictedLocalPlayer.isJumping = serverPlayer.isJumping;
+    predictedLocalPlayer.isDashing = serverPlayer.isDashing;
+    predictedLocalPlayer.isBlocking = serverPlayer.isBlocking;
+    predictedLocalPlayer.isStunned = serverPlayer.isStunned;
+    predictedLocalPlayer.isAttacking = serverPlayer.isAttacking;
+    predictedLocalPlayer.currentAttack = serverPlayer.currentAttack;
+    predictedLocalPlayer.dashCooldownTimer = serverPlayer.dashCooldownTimer ?? predictedLocalPlayer.dashCooldownTimer;
+    predictedLocalPlayer.dashTimer = serverPlayer.dashTimer ?? predictedLocalPlayer.dashTimer;
+
+    //drop every input the server has confirmed as processed
+    const lastProcessedSeq = serverPlayer.lastProcessedSeq ?? -1;
+    while (pendingInputs.length && pendingInputs[0].seq <= lastProcessedSeq) {
+        pendingInputs.shift();
+    }
+
+    //replay whatever's left on top of the fresh authoritative snapshot.
+    //IMPORTANT: group by the tick each input was generated in and advance gravity/timers
+    //only ONCE per tick, not once per input - a single tick can carry multiple inputs
+    //(a "move" every tick, plus "jump"/"dash"/"attack"/"block" whenever those keys fire in
+    //that same tick), and stepping gravity per-input instead of per-tick was the bug that
+    //caused the local player to sink through the floor and flicker on every jump/dash/attack.
+    const mapBoundaries = currentMap ? currentMap.boundaries : null;
+    const groundY = currentMap ? currentMap.groundY : serverPlayer.position.y;
+
+    const inputsByTick = new Map(); // tick id -> inputs[]
+    pendingInputs.forEach(input => {
+        const tickId = input.tick ?? input.seq; // fallback for any legacy/untagged input
+        if (!inputsByTick.has(tickId)) {
+            inputsByTick.set(tickId, []);
+        }
+        inputsByTick.get(tickId).push(input);
+    });
+
+    const opponent = state.players.find(p => p.socketId !== socket.id);
+
+    [...inputsByTick.keys()].sort((a, b) => a - b).forEach(tickId => {
+        simulateTick(predictedLocalPlayer, inputsByTick.get(tickId), mapBoundaries, groundY, FIXED_DT, opponent);
+    });
+};
+
+// find the two buffered server snapshots that straddle "now minus INTERP_DELAY" and
+// linearly interpolate the opponent's position between them. everything other than
+// position (health, combo, attack state, etc.) always reflects the latest known value -
+// only position benefits from smoothing.
+const getInterpolatedOpponentSnapshot = () => {
+    if (stateBuffer.length === 0) {
+        return null;
+    }
+
+    const latest = stateBuffer[stateBuffer.length - 1].state;
+    const opponent = latest.players.find(p => p.socketId !== socket.id);
+    if (!opponent) {
+        return null;
+    }
+
+    const renderTime = performance.now() - INTERP_DELAY;
+
+    let older = null;
+    let newer = null;
+    for (let i = 0; i < stateBuffer.length - 1; i++) {
+        if (stateBuffer[i].receivedAt <= renderTime && stateBuffer[i + 1].receivedAt >= renderTime) {
+            older = stateBuffer[i];
+            newer = stateBuffer[i + 1];
+            break;
+        }
+    }
+
+    //not enough buffered history yet (match just started, or a lag spike) - fall back
+    //to whatever the latest known position is rather than freezing/extrapolating.
+    if (!older || !newer) {
+        return { socketId: opponent.socketId, position: opponent.position };
+    }
+
+    const oldOpponent = older.state.players.find(p => p.socketId === opponent.socketId);
+    const newOpponent = newer.state.players.find(p => p.socketId === opponent.socketId);
+    if (!oldOpponent || !newOpponent) {
+        return { socketId: opponent.socketId, position: opponent.position };
+    }
+
+    const span = newer.receivedAt - older.receivedAt;
+    const t = span > 0 ? Math.max(0, Math.min(1, (renderTime - older.receivedAt) / span)) : 1;
+
+    return {
+        socketId: opponent.socketId,
+        position: {
+            x: oldOpponent.position.x + (newOpponent.position.x - oldOpponent.position.x) * t,
+            y: oldOpponent.position.y + (newOpponent.position.y - oldOpponent.position.y) * t
+        }
+    };
+};
+
+// build the per-frame list of players actually used for drawing/camera: local player uses
+// the predicted position, opponent uses the interpolated position, everything else
+// (health, combo, attack/animation flags) always comes straight from the latest server state.
+const getRenderPlayers = () => {
+    if (!currentGameState || !currentGameState.players) {
+        return [];
+    }
+
+    const interpolatedOpponent = getInterpolatedOpponentSnapshot();
+
+    return currentGameState.players.map(player => {
+        if (player.socketId === socket.id && predictedLocalPlayer && !DEBUG_DISABLE_PREDICTION) {
+            return {
+                ...player,
+                position: predictedLocalPlayer.position,
+                velocity: predictedLocalPlayer.velocity,
+                facing: predictedLocalPlayer.facing,
+                isGrounded: predictedLocalPlayer.isGrounded,
+                isDashing: predictedLocalPlayer.isDashing,
+                isBlocking: predictedLocalPlayer.isBlocking
+            };
+        }
+
+        if (interpolatedOpponent && interpolatedOpponent.socketId === player.socketId) {
+            return { ...player, position: interpolatedOpponent.position };
+        }
+
+        return player;
+    });
+};
 
 const updateGameState = (state)=>{
     const isFirstState = !currentGameState;
@@ -88,7 +289,24 @@ const updateGameState = (state)=>{
             initializePlayerSprites(player);
             //initialize health tracker
             playerHealthTracker.set(player.socketId, player.health);
+            //initialize combo tracker
+            playerComboTracker.set(player.socketId, { count: player.combo || 0, poppedAt: 0 });
         });
+
+        //seed the predicted local player mirror from the first authoritative snapshot
+        const localPlayer = state.players.find(p => p.socketId === socket.id);
+        if (localPlayer) {
+            predictedLocalPlayer = structuredClone(localPlayer);
+        }
+    }
+
+    //reconcile local player prediction against this authoritative update
+    reconcileLocalPlayer(state);
+
+    //buffer this snapshot for opponent interpolation
+    stateBuffer.push({ state, receivedAt: performance.now() });
+    if (stateBuffer.length > STATE_BUFFER_MAX) {
+        stateBuffer.shift();
     }
     
     //check for health changes to play hit sounds
@@ -104,10 +322,21 @@ const updateGameState = (state)=>{
             
             //update tracker
             playerHealthTracker.set(player.socketId, player.health);
+
+            //track combo increases to trigger the pop animation
+            const comboEntry = playerComboTracker.get(player.socketId);
+            const previousCombo = comboEntry ? comboEntry.count : 0;
+            if(player.combo > previousCombo){
+                playerComboTracker.set(player.socketId, { count: player.combo, poppedAt: performance.now() });
+            } else if(player.combo !== previousCombo){
+                //combo dropped/reset - update the count but don't re-trigger the pop
+                playerComboTracker.set(player.socketId, { count: player.combo, poppedAt: comboEntry ? comboEntry.poppedAt : 0 });
+            }
         });
     }
     
-    //update battle UI with current state
+    //update battle UI with the raw authoritative state (health/combo/timer should never
+    //be predicted or interpolated - always show exactly what the server says)
     battleUI.update(state);
 };
 
@@ -120,11 +349,7 @@ const initializePlayerSprites = (player) => {
         return;
     }
     
-    if(!spriteManager.sprites.has(characterId)){
-        spriteManager.loadCharacter(characterId, config);
-    }
-    
-    const animator = spriteManager.getAnimator(characterId);
+    const animator = spriteManager.createAnimatorForPlayer(player.socketId, characterId, config);
     if(animator){
         //pass character ID to animationStateManager for audio playback
         animationStateManager.registerPlayer(player.socketId, animator, characterId);
@@ -153,6 +378,13 @@ const stopRender = ()=>{
     //clear health tracker
     playerHealthTracker.clear();
 
+    //clear combo tracker
+    playerComboTracker.clear();
+
+    //reset prediction/interpolation state for the next match
+    predictedLocalPlayer = null;
+    stateBuffer = [];
+
     if(bgImg){
         bgImg.remove();
         bgImg = null;
@@ -160,6 +392,7 @@ const stopRender = ()=>{
     
     //clear animation state manager
     animationStateManager.clear();
+    spriteManager.clear();
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     console.log("Render stopped");
@@ -230,10 +463,10 @@ const initializeRender = ()=>{
     };
 
     //update current player's viewport
-    const updateCamera = ()=>{
+    const updateCamera = (renderPlayers)=>{
         
-        const localPlayer = currentGameState.players.find(p => p.socketId === socket.id);
-        const opponent = currentGameState.players.find(p => p.socketId !== socket.id);
+        const localPlayer = renderPlayers.find(p => p.socketId === socket.id);
+        const opponent = renderPlayers.find(p => p.socketId !== socket.id);
 
         if(!localPlayer || !opponent){
             return;
@@ -353,6 +586,48 @@ const initializeRender = ()=>{
             player.position.x, 
             player.position.y - player.size.height + 5
         );
+
+        //draw combo counter above the username, visible for both players
+        drawComboCounter(player);
+    };
+
+    const drawComboCounter = (player) => {
+        if(!player.combo || player.combo < 2){
+            return;
+        }
+
+        const comboEntry = playerComboTracker.get(player.socketId);
+        const poppedAt = comboEntry ? comboEntry.poppedAt : 0;
+        const timeSincePop = performance.now() - poppedAt;
+
+        //brief scale-up pop right after a new hit lands, settles back to normal size
+        const popProgress = Math.min(timeSincePop / COMBO_POP_DURATION, 1);
+        const scale = timeSincePop < COMBO_POP_DURATION ? 1.6 - (0.6 * popProgress) : 1;
+
+        //color escalates with combo size
+        let color = '#ffd700'; //gold
+        if(player.combo >= 6){
+            color = '#ff3333'; //red for big combos
+        } else if(player.combo >= 4){
+            color = '#ff8c00'; //orange
+        }
+
+        const x = player.position.x;
+        const y = player.position.y - player.size.height - 18;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(scale, scale);
+
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 20px Arial';
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 4;
+        ctx.strokeText(`${player.combo} HIT COMBO`, 0, 0);
+        ctx.fillStyle = color;
+        ctx.fillText(`${player.combo} HIT COMBO`, 0, 0);
+
+        ctx.restore();
     };
     
     const drawCooldowns = (player) => {
@@ -469,12 +744,16 @@ const initializeRender = ()=>{
         if(!currentGameState || !currentGameState.players){
             return;
         }
+
+        //predicted local position + interpolated opponent position, used for both
+        //camera framing and drawing so they never disagree with each other
+        const renderPlayers = getRenderPlayers();
         
         //dont update camera if game has ended
         const gameEnded = showKOOverlay || (currentGameState.players && currentGameState.players.some(p => p.state === 'victory' || p.state === 'defeated'));
         
         if(!gameEnded){
-            updateCamera();
+            updateCamera(renderPlayers);
         }
 
         drawBackground();
@@ -484,7 +763,7 @@ const initializeRender = ()=>{
         ctx.translate(-camera.x, -camera.y);
         
         //render players
-        currentGameState.players.forEach(player=>{
+        renderPlayers.forEach(player=>{
             //draw player sprite with animation
             drawPlayer(player, deltaTime);
         });
@@ -493,7 +772,7 @@ const initializeRender = ()=>{
         
         drawKOOverlay(currentTime);
         
-        // currentGameState.players.forEach(player=>{
+        // renderPlayers.forEach(player=>{
         //     //draw cooldown indicators
         //     drawCooldowns(player);
         // });
@@ -506,4 +785,4 @@ const initializeRender = ()=>{
     animate(lastFrameTime);
 };
 
-export { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, canvas };
+export { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, canvas, predictTick };
