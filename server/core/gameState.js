@@ -158,9 +158,19 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 damageReceived: 0,
                 killCount: 0,
                 
-                //input buffer
+                //raw per-tick network input reception queue - drained every
+                //tick regardless of legality (see processInput/gameTick).
+                //NOT the same thing as actionBuffer below.
                 inputBuffer: [],
                 lastInputTime: 0,
+
+                //── input buffer (spec section 1) ──
+                //short-lived queue for committed actions (jump/attack/dash)
+                //that arrived while illegal to perform, so they still fire
+                //the instant the current lock ends instead of being dropped.
+                //see addToInputBuffer/pruneInputBuffer/consumeOldestValidInput
+                //below.
+                actionBuffer: [],
 
                 //highest client input sequence number this player's inputs have been
                 //applied through - echoed back to the client in getClientGameState()
@@ -379,6 +389,71 @@ const applyBlock = (player, activate) => {
     }
 };
 
+// ── Input Buffering System (build-order item 1 / spec section 1) ──────
+// A naive engine drops a jump/attack/dash pressed a few frames before the
+// current lock (attack recovery, hitstun, ...) ends, which feels
+// unresponsive. Instead, committed actions that can't legally execute the
+// instant they arrive get queued here and retried every tick until either
+// they succeed or they age out of the window. Movement (continuous, sent
+// every tick already) and block (a hold-state, not a one-shot commit) are
+// NOT buffered - only jump/attack/dash, which are the ones gated by
+// stateMachine's canPerformAction.
+const ACTION_BUFFER_WINDOW_FRAMES = 5; // spec calls for a 4-6 frame window
+
+const addToInputBuffer = (player, input, currentFrame) => {
+    player.actionBuffer.push({ input, bufferedFrame: currentFrame });
+};
+
+const pruneInputBuffer = (player, currentFrame) => {
+    player.actionBuffer = player.actionBuffer.filter(
+        entry => currentFrame - entry.bufferedFrame <= ACTION_BUFFER_WINDOW_FRAMES
+    );
+};
+
+// "is this character currently in a state that allows a new action" - the
+// SAME base gate jump/attack/dash already share in stateMachine.js. Extra,
+// action-specific gates (isGrounded, cooldown, dash velocity/isBlocking)
+// are still checked by applyJump/applyDash/initiateAttack themselves at
+// execution time, same as they always were for a same-tick input.
+const canPerformAction = (player) => {
+    return stateMachine.canPerformAction(player.combatState);
+};
+
+// called once per player per tick. If the state machine currently allows a
+// new action, pops and executes the OLDEST buffered entry (FIFO, per spec -
+// a newer entry further back in the queue is not "peeked ahead of" even if
+// it happens to be more immediately executable). The entry is consumed
+// either way once popped - if the underlying action still refuses (e.g.
+// still on cooldown, not grounded for a jump), that's the same outcome a
+// same-tick unbuffered input would have had, so it's simply dropped rather
+// than requeued.
+const consumeOldestValidInput = (gameState, player, currentFrame) => {
+    if (player.actionBuffer.length === 0 || !canPerformAction(player)) {
+        return;
+    }
+
+    const { input, bufferedFrame } = player.actionBuffer.shift();
+
+    switch (input.type) {
+        case 'jump':
+            applyJump(player);
+            break;
+        case 'dash':
+            applyDash(player, currentFrame);
+            break;
+        case 'attack': {
+            const result = gameState.attackHandler.initiateAttack(gameState, player, input.ability);
+            const bufferedFor = currentFrame - bufferedFrame;
+            if (result.success) {
+                console.log(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
+            } else {
+                console.log(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
+            }
+            break;
+        }
+    }
+};
+
 //main game loop update
 const gameTick = (roomId, io)=>{
     const gameState = gameStates.get(roomId);
@@ -519,33 +594,28 @@ const gameTick = (roomId, io)=>{
             }
         }
 
-        //process all other inputs
+        //process all other inputs - jump/attack/dash are committed actions
+        //gated by combat-state legality, so they go through the input
+        //buffer (see addToInputBuffer/consumeOldestValidInput above) instead
+        //of executing directly: a button pressed a few frames before the
+        //current lock ends still fires the instant it's legal, rather than
+        //being silently dropped like before. Block is a hold-state, not a
+        //one-shot committed action, so it stays immediate.
         otherInputs.forEach(input => {
             switch (input.type) {
                 case 'jump':
-                    applyJump(player);
-                    break;
                 case 'attack':
-                    const result = gameState.attackHandler.initiateAttack(
-                        gameState,
-                        player,
-                        input.ability
-                    );
-                    
-                    if (result.success) {
-                        console.log(`[GameState] ${player.socketId} started ${input.ability}`);
-                    } else {
-                        console.log(`[GameState] Attack ${input.ability} failed: ${result.reason}`);
-                    }
+                case 'dash':
+                    addToInputBuffer(player, input, currentFrame);
                     break;
                 case 'block':
                     applyBlock(player, input.activate);
                     break;
-                case 'dash':
-                    applyDash(player, currentFrame);
-                    break;
             }
         });
+
+        pruneInputBuffer(player, currentFrame);
+        consumeOldestValidInput(gameState, player, currentFrame);
         
         applyGravity(player, null, gameState.map.groundY);
 

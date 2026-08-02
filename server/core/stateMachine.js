@@ -67,28 +67,40 @@ function canMove(state) {
     return !isAttackState(state) && state !== STATES.HITSTUN && !isLocked(state);
 }
 
+// ── generic legality gate ────────────────────────────────────────────
+// mirrors the function of the same name required by the input-buffering
+// spec (section 1): "checks whether the character is currently in a state
+// that allows a new action (not mid-recovery, not locked)". canJump/
+// canAttack/canStartBlock below were already identical checks under
+// different names, so they're now defined in terms of this one gate; only
+// canDash adds anything on top (you can't dash-cancel a dash already in
+// progress).
+function canPerformAction(state) {
+    return !isAttackState(state) && !isLocked(state);
+}
+
 // mirrors old: isGrounded && !isJumping && !isStunned && !isAttacking
 // (isGrounded/isJumping are still checked by the caller)
 function canJump(state) {
-    return !isAttackState(state) && !isLocked(state);
+    return canPerformAction(state);
 }
 
 // mirrors old: !isStunned && !isDead && !isAttacking
 function canAttack(state) {
-    return !isAttackState(state) && !isLocked(state);
+    return canPerformAction(state);
 }
 
 // mirrors old: !isBlocking && !isAttacking && !isStunned
 // (isBlocking is still checked by the caller - blocking isn't its own
 // combatState, same as the spec's state list)
 function canStartBlock(state) {
-    return !isAttackState(state) && !isLocked(state);
+    return canPerformAction(state);
 }
 
 // mirrors old: !isDashing && !isAttacking && !isStunned && !isBlocking
 // (cooldown/velocity/isBlocking still checked by the caller)
 function canDash(state) {
-    return !isAttackState(state) && !isLocked(state) && state !== STATES.DASHING;
+    return canPerformAction(state) && state !== STATES.DASHING;
 }
 
 // ── transitions ──────────────────────────────────────────────────────
@@ -154,6 +166,7 @@ module.exports = {
     STATES,
     isAttackState,
     isLocked,
+    canPerformAction,
     canMove,
     canJump,
     canAttack,
