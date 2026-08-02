@@ -15,16 +15,16 @@ class SpriteAnimator {
             if (img.complete && img.naturalWidth !== 0) {
                 this._loadedCount++;
             } else {
-                img.onload = () => {
+                img.addEventListener('load', () => {
                     this._loadedCount++;
                     if (this._loadedCount >= this._totalSheets) {
                         this.isLoaded = true;
                         console.log(`[SpriteAnimator] All sheets loaded: ${this.config.name}`);
                     }
-                };
-                img.onerror = () => {
+                });
+                img.addEventListener('error', () => {
                     console.error(`[SpriteAnimator] Failed to load sheet "${name}" for: ${this.config.name}`);
-                };
+                });
             }
         });
 
@@ -151,43 +151,57 @@ class SpriteAnimator {
 
 class SpriteManager {
     constructor() {
-        this.sprites = new Map();          // Map<characterId, SpriteAnimator>
-        this.characterConfigs = new Map();
+        this.animators = new Map();       // Map<socketId, SpriteAnimator> - one per PLAYER, own animation state
+        this.loadedSheets = new Map();    // Map<characterId, { images, config }> - shared, cached art (loaded once per character)
     }
-    
-    loadCharacter(characterId, config) {
-        this.characterConfigs.set(characterId, config);
+
+    // loads (or reuses already-loaded) image sheets for a character. Safe to call for
+    // multiple players sharing the same character - the underlying Image objects and
+    // their network load are shared, only the animation STATE below is kept separate.
+    _getOrLoadSheets(characterId, config) {
+        if (this.loadedSheets.has(characterId)) {
+            return this.loadedSheets.get(characterId);
+        }
 
         const images = {};
-        let loadCount = 0;
-        const totalSheets = Object.keys(config.spriteSheets).length;
-        
         Object.entries(config.spriteSheets).forEach(([sheetName, path]) => {
             const img = new Image();
             img.src = path;
-            img.onload = () => {
-                loadCount++;
-                if (loadCount === totalSheets) {
-                    console.log(`[SpriteManager] All sheets loaded for: ${characterId}`);
-                }
-            };
             images[sheetName] = img;
         });
-        
-        // One animator per character, holds all its sheet images
-        const animator = new SpriteAnimator(images, config);
-        this.sprites.set(characterId, animator);   // key = characterId only
-        console.log(`[SpriteManager] Loaded character: ${characterId}`);
-    }
-    
-    getAnimator(characterId) {
-        return this.sprites.get(characterId);
+
+        const entry = { images, config };
+        this.loadedSheets.set(characterId, entry);
+        console.log(`[SpriteManager] Loading sheets for: ${characterId}`);
+        return entry;
     }
 
-    unloadCharacter(characterId) {
-        this.sprites.delete(characterId);
-        this.characterConfigs.delete(characterId);
-        console.log(`[SpriteManager] Unloaded character: ${characterId}`);
+    // creates (or replaces) a dedicated animator for this specific player. Two players
+    // on the same character get two separate SpriteAnimator instances, pointed at the
+    // same cached Image objects, so neither player's animation state can stomp the other's.
+    createAnimatorForPlayer(socketId, characterId, config) {
+        const { images } = this._getOrLoadSheets(characterId, config);
+        const animator = new SpriteAnimator(images, config);
+        this.animators.set(socketId, animator);
+        console.log(`[SpriteManager] Created animator for player: ${socketId} (${characterId})`);
+        return animator;
+    }
+
+    getAnimator(socketId) {
+        return this.animators.get(socketId);
+    }
+
+    unregisterPlayer(socketId) {
+        this.animators.delete(socketId);
+        console.log(`[SpriteManager] Unregistered animator for player: ${socketId}`);
+    }
+
+    // clears per-player animators (and their in-progress animation state) between matches.
+    // loadedSheets is intentionally left alone - cached art is safe and worth keeping
+    // across rematches/character re-selection.
+    clear() {
+        this.animators.clear();
+        console.log('[SpriteManager] Cleared all player animators');
     }
 }
 
