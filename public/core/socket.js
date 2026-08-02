@@ -5,6 +5,7 @@ import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimati
 import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
+import { SERVER_URL } from "./config.js";
 
 let socket = null;
 let inMatch = false;
@@ -28,7 +29,9 @@ const initializeSocket = (mode, roomId) => {
         return;
     }
 
-    socket = io({ transports: ["websocket"], upgrade: false, timeout: 60000 });
+    // Passing "" to io() connects to the same origin the page was loaded from.
+    // Passing SERVER_URL connects to a separately-deployed backend over WSS.
+    socket = io(SERVER_URL, { transports: ["websocket"], upgrade: false, timeout: 60000 });
 
     socket.on("disconnect", (reason) => console.log("[Socket] disconnected:", reason));
     socket.on("connect_error", (err) => console.log("[Socket] connect_error:", err.message));
