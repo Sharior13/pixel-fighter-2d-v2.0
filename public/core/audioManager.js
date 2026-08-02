@@ -1,3 +1,5 @@
+import { ASSET_BASE_URL } from "./config.js";
+
 class AudioManager{
     constructor(){
         this.sfxVolume = 0.9;
@@ -173,12 +175,12 @@ class AudioManager{
     //map music
     
     playMapMusic(mapId){
-        const musicPath = `../assets/music/${mapId}.ogg`;
+        const musicPath = `${ASSET_BASE_URL}/music/${mapId}.ogg`;
         this.playMusic(musicPath, true, true);
     }
     
     playTitleMusic(){
-        this.playMusic('../assets/music/forest.ogg', true, true);
+        this.playMusic(`${ASSET_BASE_URL}/music/forest.ogg`, true, true);
     }
     
     //character sfx
@@ -220,7 +222,7 @@ class AudioManager{
             return;
         }
         
-        const soundPath = `../assets/characters/${characterId}/${characterId}-${soundFile}.ogg`;
+        const soundPath = `${ASSET_BASE_URL}/characters/${characterId}/${characterId}-${soundFile}.ogg`;
         this.playSFX(soundPath);
     }
     
@@ -242,7 +244,7 @@ class AudioManager{
         const sounds = ['attack', 'basic', 'special', 'ultimate', 'hit', 'jump'];
         
         sounds.forEach(sound => {
-            const soundPath = `../assets/characters/${characterId}/${characterId}-${sound}.ogg`;
+            const soundPath = `${ASSET_BASE_URL}/characters/${characterId}/${characterId}-${sound}.ogg`;
             const audio = new Audio(soundPath);
             audio.preload = 'auto';
             

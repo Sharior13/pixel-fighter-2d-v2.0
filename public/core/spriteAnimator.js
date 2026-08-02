@@ -1,3 +1,5 @@
+import { ASSET_BASE_URL } from "./config.js";
+
 class SpriteAnimator {
     constructor(spriteSheets, config) {
         this.spriteSheets = spriteSheets;
@@ -166,7 +168,7 @@ class SpriteManager {
         const images = {};
         Object.entries(config.spriteSheets).forEach(([sheetName, path]) => {
             const img = new Image();
-            img.src = path;
+            img.src = `${ASSET_BASE_URL}/${path}`;
             images[sheetName] = img;
         });
 

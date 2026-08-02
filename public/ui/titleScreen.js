@@ -3,6 +3,7 @@ import { initializeSocket } from "../core/socket.js";
 import "./characterSelect.js";
 import "../core/input.js";
 import { audioManager } from "../core/audioManager.js";
+import { ASSET_BASE_URL } from "../core/config.js";
 import "./touchControls.js";
 
 class TitleScreenUI {
@@ -366,7 +367,7 @@ class TitleScreenUI {
     setDefaultAvatar() {
         if (this.avatarImage) {
             // Set a default avatar or placeholder
-            this.avatarImage.src = './assets/characters/rukia/rukia-icon.png';
+            this.avatarImage.src = `${ASSET_BASE_URL}/characters/rukia/rukia-icon.png`;
             this.avatarImage.onerror = () => {
                 console.warn('[TitleScreenUI] Failed to load avatar image');
                 // Set a simple colored background instead

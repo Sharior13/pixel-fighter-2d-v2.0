@@ -1,4 +1,5 @@
 import { socket } from "../core/socket.js";
+import { ASSET_BASE_URL } from "../core/config.js";
 
 class BattleUI {
     constructor() {
@@ -94,7 +95,7 @@ class BattleUI {
     
     updateCharacterImage(imageElement, characterName) {
         const charName = characterName.toLowerCase();
-        imageElement.src = `../assets/characters/${charName}/${charName}-icon.png`;
+        imageElement.src = `${ASSET_BASE_URL}/characters/${charName}/${charName}-icon.png`;
         imageElement.alt = characterName;
         
         // Handle image load error

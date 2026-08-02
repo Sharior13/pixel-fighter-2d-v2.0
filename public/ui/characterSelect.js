@@ -1,6 +1,7 @@
 import { socket } from "../core/socket.js";
 import { canvas } from "../core/render.js";
 import { audioManager } from "../core/audioManager.js";
+import { ASSET_BASE_URL } from "../core/config.js";
 
 const grid = document.getElementById("character-grid");
 const lockBtn = document.getElementById("lockBtn");
@@ -10,17 +11,17 @@ const statusText = document.getElementById("statusText");
 
 //temporary
 const CHARACTERS = [
-  { id: "luffy", name: "Luffy", image:'../assets/characters/luffy/luffy.gif' },
-  { id: "zoro", name: "Zoro", image:'../assets/characters/zoro/zoro.gif' },
-  { id: "naruto", name: "Naruto", image:'../assets/characters/naruto/naruto.gif' },
-  { id: "sasuke", name: "Sasuke", image:'../assets/characters/sasuke/sasuke.gif' },
-  { id: "kakashi", name: "Kakashi", image:'../assets/characters/kakashi/kakashi.gif' },
-  { id: "ichigo", name: "Ichigo", image:'../assets/characters/ichigo/ichigo.gif' },
-  { id: "rukia", name: "Rukia", image:'../assets/characters/rukia/rukia.gif' },
-  { id: "s1", name: "s1", image:'../assets/characters/others/s1.gif', unavailable: true },
-  { id: "s2", name: "s2", image:'../assets/characters/others/s2.gif', unavailable: true },
-  { id: "s3", name: "s3", image:'../assets/characters/others/s3.gif', unavailable: true },
-  { id: "s4", name: "s4", image:'../assets/characters/others/s4.gif', unavailable: true },
+  { id: "luffy", name: "Luffy", image: `${ASSET_BASE_URL}/characters/luffy/luffy.gif` },
+  { id: "zoro", name: "Zoro", image: `${ASSET_BASE_URL}/characters/zoro/zoro.gif` },
+  { id: "naruto", name: "Naruto", image: `${ASSET_BASE_URL}/characters/naruto/naruto.gif` },
+  { id: "sasuke", name: "Sasuke", image: `${ASSET_BASE_URL}/characters/sasuke/sasuke.gif` },
+  { id: "kakashi", name: "Kakashi", image: `${ASSET_BASE_URL}/characters/kakashi/kakashi.gif` },
+  { id: "ichigo", name: "Ichigo", image: `${ASSET_BASE_URL}/characters/ichigo/ichigo.gif` },
+  { id: "rukia", name: "Rukia", image: `${ASSET_BASE_URL}/characters/rukia/rukia.gif` },
+  { id: "s1", name: "s1", image: `${ASSET_BASE_URL}/characters/others/s1.gif`, unavailable: true },
+  { id: "s2", name: "s2", image: `${ASSET_BASE_URL}/characters/others/s2.gif`, unavailable: true },
+  { id: "s3", name: "s3", image: `${ASSET_BASE_URL}/characters/others/s3.gif`, unavailable: true },
+  { id: "s4", name: "s4", image: `${ASSET_BASE_URL}/characters/others/s4.gif`, unavailable: true },
 ];
 const characterSelectState = {
     selectedCharacter: null,
@@ -35,7 +36,7 @@ const playCharacterLockSound = (characterId) => {
 
     // Use audioManager for proper volume control
     audioManager.playSFX(
-        `../assets/characters/${characterId}/${characterId}-select.ogg`
+        `${ASSET_BASE_URL}/characters/${characterId}/${characterId}-select.ogg`
     );
 };
 
