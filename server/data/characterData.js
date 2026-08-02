@@ -33,57 +33,6 @@ const CHARACTERS = {
             ultimate: { id: "whirlwind" }
         }
     },
-    naruto: {
-        id: "naruto",
-        name: "Naruto",
-        stats: {
-            maxHealth: 1050,
-            speed: 6.0,
-            jumpForce: 15,
-            weight: 1.0
-        },
-        abilities: {
-            attack1: { id: "naruto_barrage" },
-            attack2: { id: "naruto_kick" },
-            basic: { id: "naruto_punch" },
-            special: { id: "naruto_kunai" },
-            ultimate: { id: "naruto_rasengan" }
-        }
-    },
-    kakashi: {
-        id: "kakashi",
-        name: "Kakashi",
-        stats: {
-            maxHealth: 950,
-            speed: 6.5,
-            jumpForce: 15,
-            weight: 0.85
-        },
-        abilities: {
-            attack1: { id: "kunai_down" },
-            attack2: { id: "kunai_up" },
-            basic: { id: "kakashi_kick" },
-            special: { id: "kakashi_barrage" },
-            ultimate: { id: "kakashi_chidori" }
-        }
-    },
-    sasuke: {
-        id: "sasuke",
-        name: "Sasuke",
-        stats: {
-            maxHealth: 950,
-            speed: 6.0,
-            jumpForce: 15,
-            weight: 0.95
-        },
-        abilities: {
-            attack1: { id: "sasuke_kick" },
-            attack2: { id: "sword_attack" },
-            basic: { id: "sasuke_punch" },
-            special: { id: "lightening_blade" },
-            ultimate: { id: "sasuke_chidori" }
-        }
-    },
     ichigo: {
         id: "ichigo",
         name: "Ichigo",
