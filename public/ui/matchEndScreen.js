@@ -102,6 +102,9 @@ class MatchEndScreen {
         this.updatePlayerStats('.player1-stats', localPlayer, isVictory);
         this.updatePlayerStats('.player2-stats', opponent, !isVictory);
 
+        // Match is over - hide any in-battle-only UI (rotate prompt, touch controls)
+        document.body.classList.remove('in-battle');
+
         // Show the screen
         this.screenElement.classList.add('show');
     }

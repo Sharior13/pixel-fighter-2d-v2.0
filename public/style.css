@@ -20,18 +20,32 @@
     --text-col: #FFFFFF;
 }
 
+html, body{
+    height: 100vh;   /* legacy fallback */
+    height: 100svh;  /* small viewport: guaranteed visible even with toolbar expanded */
+    height: 100dvh;  /* dynamic viewport: grows to fill once toolbar auto-hides */
+    width: 100%;
+    overscroll-behavior: none;
+}
+
 body{
-    height: 100vh;
     display: flex;
     justify-content: center;
     align-items: center;
     overflow: hidden;
     user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    /* allow normal single-finger panning (so the browser can still auto-hide
+       its own toolbar on scroll) while blocking pinch-zoom/double-tap-zoom */
+    touch-action: manipulation;
 }
 
 #canvas{
     width: 100%;
     height: 100%;
+    height: 100svh;  /* safe baseline */
+    height: 100dvh;  /* dynamic, now safe since body is no longer position:fixed */
     background-image: url('./assets/background/title-bg.gif');
     background-size: cover;
     background-repeat: no-repeat;
@@ -39,6 +53,8 @@ body{
     border: 1px solid black;
     z-index: -1;
     position: absolute;
+    top: 0;
+    left: 0;
     opacity: 97%;
 }
 
@@ -49,18 +65,29 @@ body{
 /* title screen ui */
 #title-screen{
     width: 100%;
+    max-height: 100vh;
+    max-height: 100svh;
+    max-height: 100dvh;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 32px;
-    overflow: visible;
-    margin-bottom: 50px;
+    gap: clamp(16px, 3vh, 32px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: clamp(10px, 3vh, 30px) 16px;
 }
 .title-box{
     width: 100%;
+    max-width: min(90vw, 820px);
     text-align: center;
-    margin-bottom: 50px;
+    margin: 0 auto;
     pointer-events: none;
+    margin-bottom: 50px;
+}
+.title-box img{
+    width: 100%;
+    height: auto;
+    max-width: 100%;
 }
 
 /* title screen ui buttons */
@@ -96,20 +123,22 @@ body{
 }
 
 .btn-large{
-    width: 70%;
-    padding: 18px 0;
-    font-size: 28px;
+    width: min(70%, 380px);
+    padding: clamp(12px, 2.2vh, 18px) 0;
+    font-size: clamp(16px, 3.2vw, 28px);
 }
 
 .bottom-buttons{
     display: flex;
-    gap: 30px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: clamp(14px, 3vw, 30px);
 }
 
 .btn-small{
-    width: 160px;
-    padding: 16px 0;
-    font-size: 24px;
+    width: clamp(120px, 30vw, 160px);
+    padding: clamp(10px, 1.8vh, 16px) 0;
+    font-size: clamp(14px, 2.4vw, 24px);
 }
 
 /* queuing */
@@ -123,18 +152,24 @@ body{
     position: relative;
     width: 100vw;
     height: 100vh;
+    height: 100svh;
+    height: 100dvh;
     display: none;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: clamp(10px, 2vh, 20px);
+    overflow-y: auto;
+    overflow-x: hidden;
     animation: loadIn 0.5s ease-out;
 }
 
 /* Main Selection Area */
 .selection-wrapper {
     display: flex;
-    gap: 40px;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: clamp(16px, 3.5vw, 56px);
     align-items: center;
     animation: fadeInUp 0.8s ease-out;
 }
@@ -174,8 +209,8 @@ body{
 
 .platform-stage {
     position: relative;
-    width: 200px;
-    height: 100px;
+    width: clamp(110px, 22vw, 200px);
+    height: clamp(60px, 12vw, 100px);
     perspective: 600px;
 }
 
@@ -286,11 +321,11 @@ body{
 
 .character-preview {
     position: absolute;
-    bottom: 70px;
+    bottom: clamp(40px, 8vw, 70px);
     left: 50%;
-    margin-left: -65px;
-    width: 130px;
-    height: 130px;
+    transform: translateX(-50%);
+    width: clamp(80px, 16vw, 130px);
+    height: clamp(80px, 16vw, 130px);
     background: linear-gradient(to right, #5a1f16, #6F2F20, #8b3a2b);
     border: 5px solid #c0c0c0;
     border-top: 5px solid #f0f0f0;
@@ -389,7 +424,7 @@ body{
     border-left: 3px solid #e0e0e0;
     border-bottom: 3px solid #909090;
     border-right: 3px solid #909090;
-    padding: 30px;
+    padding: clamp(14px, 3vw, 30px);
     border-radius: 12px;
     box-shadow: 
         inset 2px 2px 3px rgba(255, 255, 255, 0.2),
@@ -400,7 +435,7 @@ body{
 
 .selection-title {
     color: var(--text-white);
-    font-size: 16px;
+    font-size: clamp(12px, 1.6vw, 20px);
     text-align: center;
     margin-bottom: 20px;
     text-shadow: 3px 3px 0 var(--shadow-dark);
@@ -409,11 +444,13 @@ body{
 
 .character-grid {
     display: grid;
-    grid-template-columns: repeat(4, 120px);
-    grid-auto-rows: 120px;
-    gap: 12px;
+    grid-template-columns: repeat(4, minmax(clamp(64px, 11vw, 150px), 1fr));
+    grid-auto-rows: clamp(64px, 11vw, 150px);
+    gap: clamp(6px, 1.5vw, 12px);
     margin-bottom: 15px;
-    max-height: 220px;
+    max-height: min(280px, 40vh);
+    max-height: min(280px, 40svh);
+    max-height: min(280px, 40dvh);
     overflow-y: auto;
     overflow-x: hidden;
     padding-right: 5px;
@@ -453,9 +490,8 @@ body{
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 40px;
-    padding: 10px;
-    min-height: 120px;
+    font-size: clamp(20px, 4vw, 40px);
+    padding: clamp(4px, 1vw, 10px);
 }
 
 .character-slot:hover {
@@ -635,8 +671,10 @@ body{
 
 /* Action Button */
 .action-button-container {
-    position: absolute;
-    bottom: 40px;
+    position: relative;
+    margin-top: clamp(10px, 3vh, 20px);
+    display: flex;
+    justify-content: center;
     align-items: center;
 }
 
@@ -644,9 +682,9 @@ body{
     background: linear-gradient(180deg, #ffd700 0%, #ffed4e 40%, #daa520 70%, #b8860b 100%);
     color: #2d0f4f;
     font-family: 'Press Start 2P', cursive;
-    font-size: 16px;
+    font-size: clamp(12px, 1.6vw, 20px);
     font-weight: bold;
-    padding: 18px 45px;
+    padding: clamp(12px, 2vw, 22px) clamp(24px, 5vw, 55px);
     border: 5px solid #fff;
     border-top: 5px solid #ffffe0;
     border-left: 5px solid #ffffe0;
@@ -736,7 +774,7 @@ body{
 /* VS Text */
 .vs-text {
     position: absolute;
-    font-size: 72px;
+    font-size: clamp(32px, 6.5vw, 84px);
     color: var(--accent-gold);
     text-shadow: 
         4px 4px 0 var(--shadow-dark),
@@ -824,12 +862,16 @@ body{
 .result-container {
     text-align: center;
     background: linear-gradient(135deg, rgba(30, 30, 50, 0.9), rgba(50, 50, 70, 0.9));
-    padding: 30px;
-    border-radius: 30px;
+    width: min(94vw, 700px);
+    max-height: 94vh;
+    max-height: 94svh;
+    max-height: 94dvh;
+    padding: clamp(16px, 4vw, 30px);
+    border-radius: clamp(14px, 3vw, 30px);
     border: 5px solid;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
     animation: slideUp 0.6s ease-out 0.5s backwards;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 .result-container.victory {
@@ -855,9 +897,9 @@ body{
 
 /* Result Text */
 .result-text {
-    font-size: clamp(40px, 8vw, 80px);
+    font-size: clamp(28px, 8vw, 80px);
     font-weight: 900;
-    margin-bottom: 30px;
+    margin-bottom: clamp(10px, 3vh, 30px);
     text-transform: uppercase;
     letter-spacing: clamp(5px, 1vw, 10px);
 }
@@ -898,9 +940,9 @@ body{
 .match-stats {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: clamp(20px, 4vw, 40px);
-    margin: 30px 0;
-    padding: clamp(15px, 3vw, 30px);
+    gap: clamp(12px, 4vw, 40px);
+    margin: clamp(12px, 3vh, 30px) 0;
+    padding: clamp(10px, 3vw, 30px);
     background: rgba(0, 0, 0, 0.4);
     border-radius: 15px;
 }
@@ -911,34 +953,34 @@ body{
 
 .player-stats.winner {
     border: 3px solid #FFD700;
-    padding: 20px;
+    padding: clamp(10px, 2vw, 20px);
     border-radius: 10px;
     background: rgba(255, 215, 0, 0.1);
 }
 
 .player-stats.loser {
     opacity: 0.6;
-    padding: 20px;
+    padding: clamp(10px, 2vw, 20px);
 }
 
 .player-label {
-    font-size: clamp(18px, 2.5vw, 24px);
+    font-size: clamp(14px, 2.5vw, 24px);
     font-weight: bold;
-    margin-bottom: 15px;
+    margin-bottom: clamp(6px, 1.5vh, 15px);
     color: #FFD700;
 }
 
 .player-character {
-    font-size: clamp(24px, 3.5vw, 32px);
-    margin-bottom: 20px;
+    font-size: clamp(18px, 3.5vw, 32px);
+    margin-bottom: clamp(8px, 2vh, 20px);
     color: white;
 }
 
 .stat-row {
     display: flex;
     justify-content: space-between;
-    margin: 10px 0;
-    font-size: clamp(14px, 2vw, 18px);
+    margin: clamp(4px, 1vh, 10px) 0;
+    font-size: clamp(12px, 2vw, 18px);
     color: #ccc;
 }
 
@@ -951,18 +993,25 @@ body{
     font-weight: bold;
 }
 
-/* Action Buttons */
+/* Action Buttons — sticky to the bottom of the scrollable result panel
+   so Rematch/Main Menu stay reachable even if stats overflow and the
+   panel needs to scroll (rather than requiring a scroll to find them). */
 .match-end-buttons {
     display: flex;
-    gap: clamp(15px, 3vw, 30px);
-    margin-top: 30px;
+    gap: clamp(12px, 3vw, 30px);
+    margin-top: clamp(12px, 3vh, 30px);
+    padding-top: 10px;
     justify-content: center;
     flex-wrap: wrap;
+    position: sticky;
+    bottom: -1px;
+    background: linear-gradient(to top, rgba(35, 35, 55, 0.98) 65%, rgba(35, 35, 55, 0));
+    z-index: 2;
 }
 
 .match-end-btn {
-    padding: clamp(15px, 2vw, 20px) clamp(30px, 4vw, 50px);
-    font-size: clamp(18px, 2.5vw, 24px);
+    padding: clamp(12px, 2vw, 20px) clamp(20px, 4vw, 50px);
+    font-size: clamp(14px, 2.5vw, 24px);
     font-weight: bold;
     border: none;
     border-radius: 15px;
@@ -971,7 +1020,7 @@ body{
     text-transform: uppercase;
     letter-spacing: 2px;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-    min-width: 150px;
+    min-width: clamp(110px, 30vw, 150px);
 }
 
 .rematch-btn {
@@ -1071,8 +1120,9 @@ body{
 .custom-room {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 2px;
-    font-size: 30px;
+    font-size: clamp(16px, 4vw, 30px);
     font-weight: bold;
     letter-spacing: 2px;
     color: var(--line-color);
@@ -1129,15 +1179,17 @@ body{
 .box {
     background: var(--bg-color);
     border: 4px solid var(--line-color);
-    width: 55%;              /* slightly wider */
-    max-width: 520px;        /* cap on large screens */
-    height: 250px;
-    padding: 28px 22px;
+    width: min(90vw, 520px);
+    max-height: 90vh;
+    max-height: 90svh;
+    max-height: 90dvh;
+    padding: clamp(16px, 3vw, 28px) clamp(14px, 3vw, 22px);
     display: flex;
     flex-direction: column;  /* keep join-wrap stacked nicely */
     position: relative;
     box-shadow: 2px 1px 25px rgba(0,0,0,0.6); /* subtle darker shadow */
     border-radius: 10px;
+    overflow-y: auto;
 }
 
 
@@ -1477,9 +1529,12 @@ body{
 
 
     .profile-container {
-        width: 100%;
-        max-width: 500px;
-        padding: 20px;
+        width: min(94vw, 500px);
+        max-height: 94vh;
+        max-height: 94svh;
+        max-height: 94dvh;
+        overflow-y: auto;
+        padding: clamp(10px, 3vw, 20px);
         position: relative;
         z-index: 1;
     }
@@ -1488,7 +1543,7 @@ body{
         background: rgba(20, 20, 20, 0.9);
         border: 4px solid #ff453a;
         border-radius: 8px;
-        padding: 30px;
+        padding: clamp(16px, 4vw, 30px);
         box-shadow: 
             0 0 30px rgba(255, 69, 58, 0.5),
             inset 0 0 20px rgba(0, 0, 0, 0.5);
@@ -1543,8 +1598,8 @@ body{
 
     .avatar-container {
     position: relative;
-    width: 130px;
-    height: 130px;
+    width: clamp(90px, 22vw, 130px);
+    height: clamp(90px, 22vw, 130px);
     border: 4px solid #ff453a;
     background: rgba(0, 0, 0, 0.5);
     box-shadow: 
@@ -1710,14 +1765,24 @@ body{
             0 4px 10px rgba(0, 0, 0, 0.4);
     }
 .settings-container {
-    width: 100%;
-    max-width: 900px;
+    width: min(94vw, 900px);
+    max-height: 94vh;
+    max-height: 94svh;
+    max-height: 94dvh;
     background: rgba(20, 20, 20, 0.95);
     border: 4px solid #ff3333;
     border-radius: 15px;
-    padding: 30px;
+    padding: clamp(14px, 3vw, 30px);
     box-shadow: 0 0 30px rgba(255, 51, 51, 0.5),
                 inset 0 0 20px rgba(0, 0, 0, 0.5);
+    overflow-y: auto;
+}
+
+/* .hidden (display:none) and .settings-container both have single-class
+   specificity; when the element carries both classes this rule guarantees
+   .hidden always wins regardless of source order in the stylesheet. */
+.settings-container.hidden {
+    display: none;
 }
 
 .settings-header {
@@ -1730,12 +1795,12 @@ body{
 }
 
 .title {
-    font-size: 48px;
+    font-size: clamp(24px, 5vw, 48px);
     color: #ff3333;
     text-shadow: 3px 3px 0 #000,
                  0 0 20px #ff3333,
                  0 0 40px #ff3333;
-    letter-spacing: 4px;
+    letter-spacing: clamp(2px, 0.5vw, 4px);
     font-style: italic;
     transform: skew(-5deg);
 }
@@ -1768,7 +1833,9 @@ body{
 }
 
 .settings-content {
-    max-height: 600px;
+    max-height: min(600px, 70vh);
+    max-height: min(600px, 70svh);
+    max-height: min(600px, 70dvh);
     overflow-y: auto;
     padding-right: 10px;
 }
@@ -1797,7 +1864,7 @@ body{
 }
 
 .section-title {
-    font-size: 28px;
+    font-size: clamp(18px, 3.5vw, 28px);
     color: #ff3333;
     text-shadow: 2px 2px 0 #000,
                  0 0 15px #ff3333;
@@ -1892,10 +1959,12 @@ body{
 /* Control Settings */
 .control-item {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     margin-bottom: 15px;
-    padding: 12px;
+    padding: clamp(8px, 1.5vw, 12px);
     background: rgba(255, 51, 51, 0.1);
     border-radius: 8px;
     border: 1px solid rgba(255, 51, 51, 0.3);
@@ -1909,7 +1978,7 @@ body{
 
 .control-label {
     color: #fff;
-    font-size: 16px;
+    font-size: clamp(13px, 2.2vw, 16px);
     font-weight: bold;
     text-transform: uppercase;
 }
@@ -1918,12 +1987,12 @@ body{
     background: #ff3333;
     color: white;
     border: 2px solid #fff;
-    padding: 10px 25px;
-    font-size: 16px;
+    padding: clamp(8px, 1.5vw, 10px) clamp(14px, 3vw, 25px);
+    font-size: clamp(12px, 2vw, 16px);
     font-weight: bold;
     border-radius: 6px;
     cursor: pointer;
-    min-width: 100px;
+    min-width: 90px;
     transition: all 0.3s ease;
     box-shadow: 0 3px 0 #cc0000,
                 0 0 15px rgba(255, 51, 51, 0.5);
@@ -2068,6 +2137,9 @@ body{
 
 /* Tablets and smaller laptops */
 @media (max-width: 1024px) {
+    .title-box{
+        margin-bottom: unset;
+    }
     .character-frame {
         width: 90px;
         height: 90px;
@@ -2118,6 +2190,9 @@ body{
 
 /* Mobile devices (landscape) */
 @media (max-width: 768px) {
+    .title-box{
+        margin-bottom: unset;
+    }
     .character-frame {
         width: 70px;
         height: 70px;
@@ -2201,6 +2276,9 @@ body{
 
 /* Mobile devices (portrait) */
 @media (max-width: 480px) {
+    .title-box{
+        margin-bottom: unset;
+    }
     .character-frame {
         width: 55px;
         height: 55px;
@@ -2283,6 +2361,9 @@ body{
 
 /* Very small screens */
 @media (max-width: 375px) {
+    .title-box{
+        margin-bottom: unset;
+    }
     #health-bg-p1,
     #health-bg-p2 {
         width: clamp(100px, 22vw, 180px);
@@ -2307,5 +2388,291 @@ body{
 
     .ultimate-bar-bg {
         height: clamp(8px, 1.2vh, 12px);
+    }
+}
+
+/* =========================================================
+   RESPONSIVE OVERHAUL — screens beyond the battle HUD
+   (title, character select, room modal, settings, profile)
+   plus touch-controls / orientation handling for mobile & tablet
+   ========================================================= */
+
+/* ----- Character select: stack platforms above/below the
+   selection grid once there isn't room for 3 columns ----- */
+@media (max-width: 900px) and (orientation: portrait), (max-width: 640px) {
+    .selection-wrapper {
+        flex-direction: column;
+        gap: clamp(10px, 2vh, 20px);
+    }
+
+    /* selection grid renders first visually, platforms flank it on mobile */
+    .character-selection {
+        order: 1;
+    }
+
+    .player-platform:nth-child(1) { order: 0; }
+    .player-platform:nth-child(3) { order: 2; }
+
+    .platform-stage {
+        width: clamp(90px, 26vw, 140px);
+        height: clamp(50px, 14vw, 70px);
+    }
+
+    .vs-text {
+        display: none; /* redundant once platforms stack, avoid overlap */
+    }
+}
+
+@media (max-width: 600px) {
+    .character-grid {
+        grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+        grid-auto-rows: 56px;
+        max-height: 30vh;
+        max-height: 30svh;
+        max-height: 30dvh;
+    }
+
+    .stage-selection {
+        flex-wrap: wrap;
+    }
+
+    .stage-slot {
+        width: clamp(50px, 18vw, 80px);
+        height: clamp(32px, 11vw, 50px);
+    }
+}
+
+/* ----- Custom room modal ----- */
+@media (max-width: 560px) {
+    .join-wrap {
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+        margin-top: 20px;
+    }
+
+    .join {
+        width: 100%;
+    }
+
+    .top-bar {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+}
+
+/* ----- Settings: stack key-bind rows on very narrow screens ----- */
+@media (max-width: 420px) {
+    .control-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .key-btn {
+        width: 100%;
+    }
+
+    .settings-header {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+}
+
+/* ----- Landscape phones: battle screens are wide but very short.
+   Tighten vertical rhythm so the HUD never gets clipped. ----- */
+@media (max-height: 480px) and (orientation: landscape) {
+    .character-container {
+        justify-content: flex-start;
+        padding-top: 8px;
+    }
+
+    .selection-wrapper {
+        gap: 12px;
+    }
+
+    .platform-stage {
+        width: 70px;
+        height: 40px;
+    }
+
+    .character-preview {
+        width: 56px;
+        height: 56px;
+        bottom: 28px;
+    }
+
+    .character-selection {
+        padding: 10px;
+    }
+
+    .character-grid {
+        max-height: 22vh;
+        max-height: 22svh;
+        max-height: 22dvh;
+        grid-auto-rows: 48px;
+        grid-template-columns: repeat(auto-fill, minmax(48px, 1fr));
+    }
+
+    .timer-container {
+        width: 46px;
+        height: 46px;
+        top: 6px;
+    }
+
+    .timer-display {
+        font-size: 20px;
+    }
+
+    .round-indicator {
+        top: 54px;
+    }
+
+    .character-frame {
+        width: 50px !important;
+        height: 50px !important;
+        top: 6px !important;
+    }
+
+    .character-name.left, .character-name.right {
+        top: 60px !important;
+    }
+}
+
+/* ----- Rotate-device overlay -----
+   Hidden by default; shown only while a battle is in progress
+   AND the device is a narrow-screen phone in portrait mode. */
+#rotate-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    background: rgba(10, 10, 10, 0.96);
+    color: #fff;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 16px;
+    padding: 20px;
+}
+
+#rotate-overlay .rotate-icon {
+    font-size: 64px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+#rotate-overlay p {
+    font-size: clamp(14px, 4vw, 20px);
+    max-width: 320px;
+    line-height: 1.5;
+}
+
+@media (max-width: 700px) and (orientation: portrait) {
+    body.in-battle #rotate-overlay {
+        display: flex;
+    }
+}
+
+/* ----- On-screen touch controls -----
+   Hidden by default; shown via JS (touchControls.js) only on
+   touch-capable devices, and only while a battle is active. */
+#touch-controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 0 clamp(10px, 2vw, 24px) max(10px, env(safe-area-inset-bottom));
+    pointer-events: none;
+}
+
+#touch-controls.hidden {
+    display: none;
+}
+
+.touch-dpad {
+    pointer-events: auto;
+    position: relative;
+    width: clamp(130px, 30vw, 170px);
+    height: clamp(130px, 30vw, 170px);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+}
+
+.dpad-btn {
+    background: rgba(20, 20, 20, 0.55);
+    border: 2px solid rgba(255, 255, 255, 0.7);
+    color: #fff;
+    font-size: clamp(16px, 3vw, 22px);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    user-select: none;
+}
+
+.dpad-btn:active, .dpad-btn.pressed {
+    background: rgba(255, 51, 51, 0.6);
+    border-color: #fff;
+}
+
+.dpad-up    { grid-column: 2; grid-row: 1; }
+.dpad-left  { grid-column: 1; grid-row: 2; }
+.dpad-down  { grid-column: 2; grid-row: 3; }
+.dpad-right { grid-column: 3; grid-row: 2; }
+
+.touch-actions {
+    pointer-events: auto;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: clamp(8px, 1.6vw, 12px);
+    margin-bottom: clamp(4px, 1vh, 10px);
+}
+
+.action-btn {
+    width: clamp(56px, 12vw, 74px);
+    height: clamp(56px, 12vw, 74px);
+    border-radius: 50%;
+    background: rgba(220, 20, 60, 0.55);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+    color: #fff;
+    font-size: clamp(9px, 1.8vw, 12px);
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    user-select: none;
+}
+
+.action-btn:active, .action-btn.pressed {
+    background: rgba(255, 215, 0, 0.75);
+    color: #2d0f4f;
+    border-color: #fff;
+}
+
+.action-ult {
+    grid-column: 1 / span 2;
+    background: rgba(0, 200, 83, 0.55);
+}
+
+/* Only ever show the touch layer on devices whose primary input
+   is a coarse pointer (touch), regardless of the JS-driven class,
+   as a belt-and-braces guard against showing it on desktop. */
+@media (hover: hover) and (pointer: fine) {
+    #touch-controls {
+        display: none !important;
+    }
+    #rotate-overlay {
+        display: none !important;
     }
 }

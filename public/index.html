@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0a0a">
     <title>Pixel Fighter 2D</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -302,6 +306,29 @@
         </div>
     </div>
 
+
+    <!-- rotate device overlay (portrait mobile) -->
+    <div id="rotate-overlay">
+        <div class="rotate-icon">⟳</div>
+        <p>Rotate your device to landscape<br>for the best experience</p>
+    </div>
+
+    <!-- on-screen touch controls (shown automatically on touch devices) -->
+    <div id="touch-controls" class="hidden">
+        <div class="touch-dpad" id="touch-dpad">
+            <button class="dpad-btn dpad-up" data-key="w" aria-label="Jump">▲</button>
+            <button class="dpad-btn dpad-left" data-key="a" aria-label="Move Left">◀</button>
+            <button class="dpad-btn dpad-down" data-key="s" aria-label="Block">▼</button>
+            <button class="dpad-btn dpad-right" data-key="d" aria-label="Move Right">▶</button>
+        </div>
+        <div class="touch-actions" id="touch-actions">
+            <button class="action-btn action-dash" data-key="Shift" aria-label="Dash">DASH</button>
+            <button class="action-btn action-special" data-key="ArrowDown" aria-label="Special">SPECIAL</button>
+            <button class="action-btn action-atk2" data-key="ArrowRight" aria-label="Attack 2">ATK 2</button>
+            <button class="action-btn action-atk1" data-key="ArrowLeft" aria-label="Attack 1">ATK 1</button>
+            <button class="action-btn action-ult" data-key="v" aria-label="Ultimate">ULT</button>
+        </div>
+    </div>
 
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
     <!-- <script src="/socket.io/socket.io.js"></script> -->

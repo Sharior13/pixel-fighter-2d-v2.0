@@ -3,6 +3,7 @@ import { initializeSocket } from "../core/socket.js";
 import "./characterSelect.js";
 import "../core/input.js";
 import { audioManager } from "../core/audioManager.js";
+import "./touchControls.js";
 
 class TitleScreenUI {
     constructor() {
@@ -129,6 +130,7 @@ class TitleScreenUI {
     showTitleScreen() {
         canvas.style.backgroundImage = "url('../assets/background/title-bg.gif')";
         this.titleDiv.style.display = "flex";
+        document.body.classList.remove('in-battle');
         
         // Play title music
         audioManager.playTitleMusic();

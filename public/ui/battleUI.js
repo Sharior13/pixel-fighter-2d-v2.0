@@ -29,11 +29,13 @@ class BattleUI {
     
     show() {
         this.gameContainer.classList.remove('hidden');
+        document.body.classList.add('in-battle');
         this.isVisible = true;
     }
     
     hide() {
         this.gameContainer.classList.add('hidden');
+        document.body.classList.remove('in-battle');
         this.isVisible = false;
         this.currentState = null;
         this.p1PreviousCombo = 0;
