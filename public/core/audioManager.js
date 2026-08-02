@@ -184,14 +184,17 @@ class AudioManager{
     //character sfx
     
     playSFX(soundPath, volume = 1.0){
-        try{
-            const audio = new Audio(soundPath);
+        try {
+            let audio = this.sfxPool.get(soundPath);
+            if (!audio) {
+                audio = new Audio(soundPath);
+                this.sfxPool.set(soundPath, audio);
+            }
+            audio.currentTime = 0;
             audio.volume = this.sfxVolume * this.masterVolume * volume;
-            
             audio.play().catch(error => {
                 console.warn(`[AudioManager] Failed to play SFX: ${soundPath}`, error);
             });
-            
             return audio;
         }
         catch (error){
