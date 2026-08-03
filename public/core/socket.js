@@ -6,6 +6,7 @@ import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
 import { SERVER_URL } from "./config.js";
+import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
 
 let socket = null;
 let inMatch = false;
@@ -140,7 +141,17 @@ const initializeSocket = (mode, roomId) => {
             audioManager.preloadCharacterSounds(opponent.character);
             console.log('[Socket] Preloaded opponent sounds for:', opponent.character);
         }
-        
+
+        //if matchmaking paired us with an AI opponent (see server/matchmaking/
+        //matchMaking.js::createBotMatch), start the client-side bot FSM - this
+        //is an internal flag only, never shown in the UI, so the opponent
+        //looks like any other player.
+        if (opponent && opponent.isBot) {
+            initBotForMatch(socket, opponent.socketId);
+        } else {
+            stopBot();
+        }
+
         battleUI.initialize(gameState);
         initializeRender();
     });
@@ -148,6 +159,7 @@ const initializeSocket = (mode, roomId) => {
     //update game state
     socket.on("gameStateUpdate", (state) => {
         updateGameState(state);
+        feedBotGameState(state);
     });
 
     socket.on('knockoutAnimation', (data) => {
@@ -163,6 +175,7 @@ const initializeSocket = (mode, roomId) => {
         setTimeout(() => {
            //stop game loop
            stopRender();
+           stopBot();
            
            //hide battle UI
            battleUI.hide();
@@ -338,6 +351,8 @@ const cleanupSocket = () => {
         clearInterval(inputInterval);
         inputInterval = null;
     }
+
+    stopBot();
 
     inMatch = false;
     currentCharacterId = null;
