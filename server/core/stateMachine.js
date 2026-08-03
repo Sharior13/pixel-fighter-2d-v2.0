@@ -162,6 +162,35 @@ function createInitialCombatState() {
     };
 }
 
+// ── Hitstop / Impact Freeze (build-order item 2 / spec section 2) ─────
+// A short freeze (3-12 frames) applied to the two characters involved in a
+// landed hit - no movement, animations paused, so the impact has a beat to
+// register before combat resumes. This is deliberately kept SEPARATE from
+// combatState above: a frozen player keeps whatever combatState they were
+// already in (attack_active, hitstun, ...) - hitstop just pauses that
+// state's advancement for a few frames on top of it, rather than being a
+// state of its own. That also means it composes for free with everything
+// already built: gameState.js's per-tick player loop and attackSystem.js's
+// per-attack loop both just skip their own advancement while isFrozen() is
+// true, so a frozen attack's internal clock (elapsedFrames) and a frozen
+// player's hitstun/cooldown timers naturally pause rather than needing
+// separate compensation logic.
+function triggerHitstop(player, durationFrames) {
+    // max, not add: if something ever triggers overlapping hitstop on the
+    // same player in one window, that shouldn't stack freeze time
+    player.hitstopFrames = Math.max(player.hitstopFrames || 0, durationFrames);
+}
+
+function updateHitstopTimer(player) {
+    if (player.hitstopFrames > 0) {
+        player.hitstopFrames -= 1;
+    }
+}
+
+function isFrozen(player) {
+    return (player.hitstopFrames || 0) > 0;
+}
+
 module.exports = {
     STATES,
     isAttackState,
@@ -176,5 +205,8 @@ module.exports = {
     syncLegacyFlags,
     framesInState,
     resolveMovementState,
-    createInitialCombatState
+    createInitialCombatState,
+    triggerHitstop,
+    updateHitstopTimer,
+    isFrozen
 };

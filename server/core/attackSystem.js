@@ -1,4 +1,4 @@
-const { STATES, setCombatState, canAttack } = require('./stateMachine.js');
+const { STATES, setCombatState, canAttack, triggerHitstop, isFrozen } = require('./stateMachine.js');
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
@@ -233,12 +233,39 @@ const ATTACK_CONFIG_MS = {
 
 // ── frame-based scheduling constants ─────────────────────────────────
 // mirrors the old magic-number hit-check window (elapsed >= 100ms && elapsed
-// < duration - 100ms) and the old 55%-into-recovery hit-confirm release,
-// just expressed in frames now. This is the SAME behavior as before, not a
-// balance change - a real per-move startup/active/recovery authoring pass
-// is build-order item 11 (section 6 of the plan), not this step.
+// < duration - 100ms), just expressed in frames now. This is the SAME
+// behavior as before, not a balance change - a real per-move
+// startup/active/recovery authoring pass is build-order item 11 (section 6
+// of the plan), not this step.
 const STARTUP_WINDOW_MS = 100;
-const CANCEL_THRESHOLD = 0.55; // once a hit lands, attacker is freed at 55% into the animation
+
+// ── Cancel Windows (build-order item 3 / spec section 3) ──────────────
+// A cancel lets a player cut a move's RECOVERY short by chaining directly
+// into a new attack instead of eating the full "attack, wait, attack, wait"
+// loop. This replaces the placeholder mechanic step 0 had here (any hit-
+// confirmed attack generically freed the attacker into anything, at a flat
+// 55%-into-the-animation mark) - that was never a real cancel system, just
+// a stand-in until this item existed. Now: only moves listed in
+// CANCEL_TABLE are reachable, and only once the move has actually entered
+// its recovery phase (reusing activeEndFrame - the same point
+// ATTACK_RECOVERY already begins at - as the cancel window's start, rather
+// than a separate arbitrary fraction).
+//
+// The table is intentionally the SAME for all four characters for now -
+// real per-character cancel routes (which specials a given character's
+// normals actually chain into) belong to the full per-move schema pass in
+// item 11 (section 6 of the plan), not this item. The shape here (light ->
+// heavier normals -> special -> ultimate) matches the spec's own example
+// ("Light -> Heavy, or Heavy -> Special").
+const CANCEL_TABLE = {};
+function defineCancelTable(fromMove, allowedIntoMoves) {
+    CANCEL_TABLE[fromMove] = allowedIntoMoves;
+}
+defineCancelTable('attack1', ['attack2', 'basic', 'special']);
+defineCancelTable('attack2', ['basic', 'special']);
+defineCancelTable('basic', ['special']);
+defineCancelTable('special', ['ultimate']);
+defineCancelTable('ultimate', []); // nothing to cancel a finisher into
 
 // Build ATTACK_CONFIG with frame-converted fields, derived once at load time.
 // durationFrames/cooldownFrames/startupFrames/activeEndFrame are what the
@@ -254,7 +281,6 @@ for (const [characterId, moves] of Object.entries(ATTACK_CONFIG_MS)) {
         // mirrors "elapsed < duration - 100ms" - the frame after which the
         // hit-check window closes and recovery begins
         const activeEndFrame = Math.max(startupFrames + 1, durationFrames - startupFrames);
-        const cancelReleaseFrame = Math.round(durationFrames * CANCEL_THRESHOLD);
 
         ATTACK_CONFIG[characterId][moveId] = {
             ...config,
@@ -262,7 +288,16 @@ for (const [characterId, moves] of Object.entries(ATTACK_CONFIG_MS)) {
             cooldownFrames,
             startupFrames,
             activeEndFrame,
-            cancelReleaseFrame
+            // cancel window = the recovery phase itself: [activeEndFrame, durationFrames)
+            cancelWindowStartFrame: activeEndFrame,
+            cancelableInto: CANCEL_TABLE[moveId] || [],
+            // must hit-confirm to cancel - matches "producing a flowing
+            // combo" framing (a reward for landing hits, not a free
+            // block-string tool). cancelableOnBlock is wired through end to
+            // end but left false everywhere this pass - no current move is
+            // designed as a block-string starter yet.
+            cancelableOnHit: true,
+            cancelableOnBlock: false
         };
     }
 }
@@ -276,6 +311,15 @@ const MIN_DAMAGE_MULTIPLIER = 0.4;  // damage never scales below 40%
 const BASE_HITSTUN_MS = 300;
 const STUN_DECAY_PER_HIT = 25;   // each hit after the 1st stuns 25ms less
 const MIN_HITSTUN_MS = 120;      // hitstun never drops below this, so late-combo hits still connect
+
+// build-order item 2: freeze both characters briefly on a landed hit so the
+// impact has a beat to register. Spec's stated range is 3-12 frames, but
+// that read as too subtle to notice in actual play - bumped to 20 frames
+// (~330ms) per playtesting feedback. This is a deliberate feel-over-spec-
+// number deviation, not an oversight; worth remembering if a later item
+// (16, Camera & Sound Feedback) re-derives per-hit-strength scaling off the
+// spec's original range instead of this value.
+const HITSTOP_DURATION_FRAMES = 12;
 
 function getComboDamageMultiplier(comboCount) {
     const hitsIntoCombo = Math.min(comboCount, MAX_COMBO_HITS) - 1;
@@ -346,8 +390,8 @@ class AttackHandler {
             config: attackConfig,
             startFrame: currentFrame,
             hasHit: false, // Single hit only
-            dashComplete: false,
-            recoveryReleased: false
+            wasBlocked: false,
+            dashComplete: false
         };
 
         this.activeAttacks.set(attackId, attackData);
@@ -362,6 +406,56 @@ class AttackHandler {
         };
     }
 
+    // ── Cancel Windows (build-order item 3) ────────────────────────────
+    // checks whether attacker's CURRENT attack (attackData) is inside its
+    // designated cancel window and whether requestedMove is one it's
+    // legal to cancel into. Does not mutate anything - see executeCancel
+    // for the actual interrupt.
+    canCancel(attackData, requestedMove, currentFrame) {
+        const config = attackData.config;
+
+        if (!config.cancelableInto.includes(requestedMove)) {
+            return false;
+        }
+
+        const elapsedFrames = currentFrame - attackData.startFrame;
+        const inCancelWindow = elapsedFrames >= config.cancelWindowStartFrame && elapsedFrames < config.durationFrames;
+        if (!inCancelWindow) {
+            return false;
+        }
+
+        // must be confirmed by a hit or (if the move is ever configured for
+        // it) a block - a whiffed move with cancelableOnBlock still false
+        // for every move this pass gives no legal cancel at all
+        const confirmedByHit = config.cancelableOnHit && attackData.hasHit;
+        const confirmedByBlock = config.cancelableOnBlock && attackData.wasBlocked;
+        return confirmedByHit || confirmedByBlock;
+    }
+
+    // interrupts the attacker's current move (attackData) and starts
+    // requestedMove immediately, in place of riding out the rest of
+    // recovery. The old instance is deleted outright rather than left to
+    // finish quietly in the background - it's being CUT SHORT, not merely
+    // "released from" - so there's nothing left over for updateAttacks to
+    // process on a later tick.
+    executeCancel(gameState, attacker, attackData, requestedMove) {
+        this.activeAttacks.delete(attackData.id);
+        if (attacker.currentAttackId === attackData.id) {
+            attacker.currentAttackId = null;
+        }
+
+        // initiateAttack normally refuses while combatState is still an
+        // attack_* state (that's exactly what stops a fresh, non-canceled
+        // attack from interrupting another) - a cancel is the deliberate
+        // exception to that rule, so clear combatState to IDLE first. The
+        // cooldown check inside initiateAttack still applies normally: you
+        // can't cancel into a move that's on cooldown.
+        setCombatState(attacker, STATES.IDLE, gameState.tickCount);
+
+        console.log(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
+        return this.initiateAttack(gameState, attacker, requestedMove);
+    }
+
     updateAttacks(gameState) {
         const currentFrame = gameState.tickCount;
         const attacksToRemove = [];
@@ -373,20 +467,22 @@ class AttackHandler {
                 continue;
             }
 
+            // hitstop: this attack's clock doesn't advance while its owner
+            // is frozen - elapsedFrames is currentFrame-relative, so simply
+            // not evaluating it this tick is all pausing requires
+            if (isFrozen(attacker)) {
+                continue;
+            }
+
             const elapsedFrames = currentFrame - attackData.startFrame;
             const config = attackData.config;
 
-            // sub-phase transitions - only move the attacker's combatState if
-            // they still own this attack instance (an early cancel may have
-            // already handed combatState to a newer attack) AND haven't
-            // already been hit-confirm released below. Without the
-            // recoveryReleased guard, this block would re-force ATTACK_ACTIVE
-            // back onto an attacker every tick after they'd already been
-            // freed early - found while smoke-testing this rewrite (a hit
-            // landing and releasing the attacker at ~55% caused their
-            // combatState to flicker back to attack_active for the rest of
-            // the animation instead of staying at idle).
-            if (attacker.currentAttackId === attackId && !attackData.recoveryReleased) {
+            // sub-phase transitions - only move the attacker's combatState
+            // if they still own this attack instance (a cancel hands
+            // combatState to the new attack and deletes this instance
+            // outright, so this guard is really just "have we already been
+            // superseded by executeCancel this tick")
+            if (attacker.currentAttackId === attackId) {
                 if (elapsedFrames < config.startupFrames) {
                     setCombatState(attacker, STATES.ATTACK_STARTUP, attackData.startFrame);
                 } else if (elapsedFrames < config.activeEndFrame) {
@@ -406,24 +502,13 @@ class AttackHandler {
                 this.handleUltimateDash(attacker, attackData, gameState);
             }
 
-            // Hit-confirm cancel: once this attack has landed and we're far enough into
-            // recovery, free the attacker to act again while this instance finishes quietly
-            // in the background (dash/cleanup still run their course below).
-            if (!attackData.recoveryReleased && attackData.hasHit && elapsedFrames >= config.cancelReleaseFrame) {
-                attackData.recoveryReleased = true;
-                if (attacker.currentAttackId === attackId) {
-                    setCombatState(attacker, STATES.IDLE, currentFrame);
-                    releaseAttackFields(attacker);
-                }
-            }
-
             // Check if attack is complete
             if (elapsedFrames >= config.durationFrames) {
                 attacksToRemove.push(attackId);
 
                 // Only clear the attacker's active-attack fields if they still point at THIS
-                // instance - if an early cancel let them start a new attack already, that
-                // newer instance owns these fields now and must not be touched here.
+                // instance - if a cancel already let them start a new attack, that newer
+                // instance owns these fields now and must not be touched here.
                 if (attacker.currentAttackId === attackId) {
                     setCombatState(attacker, STATES.IDLE, currentFrame);
                     releaseAttackFields(attacker);
@@ -514,6 +599,14 @@ class AttackHandler {
         const damage = baseDamage * comboMultiplier;
         target.health -= damage;
         target.damageReceived += damage;
+        attackData.wasBlocked = target.isBlocking;
+
+        // Impact freeze - both characters pause briefly so the hit has a
+        // beat to register (build-order item 2). Applies whether or not the
+        // target blocked; a lighter/shorter freeze specifically for blocked
+        // hits is part of the parry/block work in item 8, not this one.
+        triggerHitstop(attacker, HITSTOP_DURATION_FRAMES);
+        triggerHitstop(target, HITSTOP_DURATION_FRAMES);
 
         // Apply knockback (reduced if blocking)
         if (!target.isBlocking) {

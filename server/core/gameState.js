@@ -130,6 +130,11 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 isBlocking: false,      
                 blockActivatedFrame: 0,
                 
+                //── hitstop / impact freeze (build-order item 2) ──
+                //orthogonal to combatState - see stateMachine.js's
+                //triggerHitstop/updateHitstopTimer/isFrozen
+                hitstopFrames: 0,
+
                 //stats from character data
                 health: charData.stats.maxHealth,
                 maxHealth: charData.stats.maxHealth,
@@ -419,16 +424,37 @@ const canPerformAction = (player) => {
     return stateMachine.canPerformAction(player.combatState);
 };
 
-// called once per player per tick. If the state machine currently allows a
-// new action, pops and executes the OLDEST buffered entry (FIFO, per spec -
-// a newer entry further back in the queue is not "peeked ahead of" even if
-// it happens to be more immediately executable). The entry is consumed
-// either way once popped - if the underlying action still refuses (e.g.
-// still on cooldown, not grounded for a jump), that's the same outcome a
-// same-tick unbuffered input would have had, so it's simply dropped rather
-// than requeued.
+// called once per player per tick. Checks two things in order:
+//   1) can the OLDEST buffered entry cancel the player's currently active
+//      attack (build-order item 3)? If so, do that immediately - this can
+//      fire even while combatState is still an attack_* state, since a
+//      cancel is specifically the exception to the normal "can't act while
+//      attacking" rule.
+//   2) otherwise, fall back to the normal path: if the state machine
+//      currently allows a fresh action, pop and execute the OLDEST buffered
+//      entry (FIFO, per spec - a newer entry further back in the queue is
+//      not "peeked ahead of" even if it happens to be more immediately
+//      executable). The entry is consumed either way once popped - if the
+//      underlying action still refuses (e.g. still on cooldown, not
+//      grounded for a jump), that's the same outcome a same-tick unbuffered
+//      input would have had, so it's simply dropped rather than requeued.
 const consumeOldestValidInput = (gameState, player, currentFrame) => {
-    if (player.actionBuffer.length === 0 || !canPerformAction(player)) {
+    if (player.actionBuffer.length === 0) {
+        return;
+    }
+
+    const oldest = player.actionBuffer[0];
+
+    if (oldest.input.type === 'attack' && player.currentAttackId) {
+        const currentAttackData = gameState.attackHandler.activeAttacks.get(player.currentAttackId);
+        if (currentAttackData && gameState.attackHandler.canCancel(currentAttackData, oldest.input.ability, currentFrame)) {
+            player.actionBuffer.shift();
+            gameState.attackHandler.executeCancel(gameState, player, currentAttackData, oldest.input.ability);
+            return;
+        }
+    }
+
+    if (!canPerformAction(player)) {
         return;
     }
 
@@ -530,6 +556,16 @@ const gameTick = (roomId, io)=>{
     //update all players
     gameState.players.forEach(player=>{
         if(player.isDead){
+            return;
+        }
+
+        // hitstop: freeze this player entirely for a few frames - no
+        // cooldowns, no stun/dash timers, no input processing, no physics.
+        // Everything below this point is exactly the stuff the spec says
+        // should pause ("no movement, animations paused"), so the simplest
+        // correct implementation is to just not run any of it this tick.
+        if (stateMachine.isFrozen(player)) {
+            stateMachine.updateHitstopTimer(player);
             return;
         }
 
@@ -829,6 +865,10 @@ const getClientGameState = (gameState)=>{
             dashCooldownTimer: p.dashCooldownTimer * FRAME_MS,
             isStunned: p.isStunned,
             isDead: p.isDead,
+            // NOT yet consumed client-side (sprite/audio retargeting onto
+            // combatState/hitstop is sections 4-5, not this item) - exposed
+            // now so that work has the data to key off when it lands.
+            isFrozen: stateMachine.isFrozen(p),
             state: p.state || 'active', // FIXED: Include state for animations
             cooldowns: msCooldowns(p.cooldowns),
             combo: p.combo,
