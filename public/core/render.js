@@ -64,7 +64,19 @@ const FIXED_DT = 1000 / 60; // matches server GAME_CONFIG.tickInterval
 // we intentionally render the opponent slightly in the past (INTERP_DELAY) so we always
 // have two real server snapshots to smoothly interpolate between, instead of snapping
 // on every network update.
-const INTERP_DELAY = 100; // ms
+//
+// Server broadcasts gameStateUpdate at ~20Hz (every 3rd tick, see gameTick() in
+// gameState.js), i.e. a snapshot roughly every 50ms *when packets arrive perfectly
+// evenly spaced*. A 100ms delay only buffers ~2 snapshots of margin against jitter -
+// fine on a low-latency/low-jitter LAN link, but a transoceanic link (e.g. APAC client
+// <-> EU server) routinely has 20-80ms+ of jitter on top of a much higher base RTT, so
+// that margin gets eaten constantly, tripping the "not enough buffered history" fallback
+// in getInterpolatedOpponentSnapshot() below - which snaps straight to the latest known
+// position instead of smoothly interpolating. Widening the delay trades a bit more
+// visual lag on the *opponent's* rendered position (never on your own input latency,
+// which stays governed by prediction/reconciliation instead) for a much bigger jitter
+// cushion. 180ms comfortably covers ~3-4 snapshot intervals even with real-world jitter.
+const INTERP_DELAY = 180; // ms
 let stateBuffer = []; // [{ state, receivedAt }]
 const STATE_BUFFER_MAX = 30;
 

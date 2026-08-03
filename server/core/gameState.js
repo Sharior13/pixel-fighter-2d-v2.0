@@ -598,7 +598,7 @@ const gameTick = (roomId, io)=>{
         }
         
         //process all buffered inputs
-        let latestMovement = null;
+        const moveInputs = [];
         const otherInputs = [];
 
         //empty the entire buffer
@@ -613,17 +613,29 @@ const gameTick = (roomId, io)=>{
             }
 
             if(input.type === 'move'){
-                latestMovement = input;
+                moveInputs.push(input);
             }
             else {
                 otherInputs.push(input);
             }
         }
 
-        //apply latest movement
-        if(latestMovement){
-            applyMovement(player, gameState.players, latestMovement.direction, null, gameState.map.boundaries);
-            player.currentDirection = latestMovement.direction;
+        //apply movement once per buffered move input (one per real client tick),
+        //not just the latest one. On a low-latency link inputBuffer usually holds at
+        //most one 'move' per gameTick anyway, so this was invisible in local/LAN
+        //testing. But over a high-RTT or jittery link, several client ticks' worth of
+        //'move' messages routinely land in the buffer between two server gameTick
+        //calls - collapsing them to "latestMovement" silently discarded the other
+        //ticks' displacement, even though the lastProcessedSeq bump above still
+        //marked every one of those seqs as "confirmed". That made the client drop
+        //those exact ticks out of pendingInputs and never replay them either, so the
+        //authoritative position quietly fell behind what the player actually held
+        //down - and the next reconciliation had to snap hard to correct it.
+        if(moveInputs.length > 0){
+            moveInputs.forEach(moveInput => {
+                applyMovement(player, gameState.players, moveInput.direction, null, gameState.map.boundaries);
+            });
+            player.currentDirection = moveInputs[moveInputs.length - 1].direction;
         } else {
             if (player.isStunned && !player.isAttacking) {
                 player.velocity.x = 0;
