@@ -148,6 +148,37 @@ const socketHandler = (io)=>{
             });           
         });
 
+        //handle inputs for the AI bot opponent, when one is in this match.
+        //The decision-making ("what should the bot do right now") happens
+        //entirely client-side in the human's browser (see
+        //public/core/botController.js) - this just forwards those decisions
+        //through the exact same processInput()/gameTick() pipeline a real
+        //player's inputs go through, so the bot is bound by the same
+        //cooldowns, hitstun, and physics as anyone else.
+        socket.on("botInput", (inputs)=>{
+            const match = getMatchBySocket(socket);
+
+            if(!match || match.phase !== "FIGHT"){
+                return;
+            }
+
+            const botPlayer = match.players.find(p => p.isBot);
+            if(!botPlayer){
+                // no bot in this match - a real client has no legitimate
+                // reason to send this, ignore it
+                return;
+            }
+
+            if(!Array.isArray(inputs)){
+                console.warn("Invalid bot input batch");
+                return;
+            }
+
+            inputs.forEach(input=>{
+                processInput(match.roomId, botPlayer.socketId, input);
+            });
+        });
+
         //rematch logic
         socket.on('rematchRequest', () => {
             console.log(`[Server] Rematch requested by ${socket.id}`);

@@ -17,7 +17,11 @@ const createMatch = (roomId, sockets)=>{
             socket,
             playerIndex: index,
             character: null,
-            locked: false
+            locked: false,
+            // true only for the synthetic "player" representing the AI bot
+            // (see server/matchmaking/matchMaking.js::createBotMatch) - real
+            // players' sockets never have this set.
+            isBot: socket.isBot === true
         }))
     };
 
@@ -161,7 +165,11 @@ const startFight = (match)=>{
         players: match.players.map(p => ({
             socketId: p.socketId,
             playerIndex: p.playerIndex,
-            character: p.character
+            character: p.character,
+            // internal-only flag so the client can decide whether to run the
+            // bot FSM (see public/core/botController.js) - never rendered in
+            // the UI, so the human never sees "bot" anywhere.
+            isBot: !!p.isBot
         }))
     };
 };
