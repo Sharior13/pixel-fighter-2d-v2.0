@@ -1,6 +1,7 @@
 const { matches, createMatch, getMatch, startCharacterSelectTimeout, selectCharacter, lockCharacter, startLoadingTimeout } = require("./matchManager.js");
 const { initializeGameState, startGameLoop } = require("../core/gameState.js");
 const { getRandomCharacter } = require("../data/characterData.js");
+const { debugLog, debugError } = require("../core/debug.js");
 
 const ROOM_ID_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const QUEUE_SIZE = 2;
@@ -33,7 +34,7 @@ const addToQueue = (socket)=>{
     }
 
     queue.push(socket);
-    console.log("Queued:", socket.id);
+    debugLog("Queued:", socket.id);
 
     const match = tryMatch();
 
@@ -54,14 +55,14 @@ const removeFromQueue = (socket)=>{
     const index = queue.findIndex(p => p.id === socket.id);
     if (index !== -1){
         queue.splice(index, 1);
-        console.log("Removed from queue:", socket.id);
+        debugLog("Removed from queue:", socket.id);
     }
     
     // Also check custom rooms
     for (const [roomId, roomData] of customRooms.entries()) {
         if (roomData.creator.id === socket.id) {
             customRooms.delete(roomId);
-            console.log(`Custom room ${roomId} deleted - creator left`);
+            debugLog(`Custom room ${roomId} deleted - creator left`);
         }
     }
 };
@@ -98,7 +99,7 @@ const clearBotFallback = (socketId) => {
 //create custom room
 const createCustomRoom = (socket) => {
     if (!ioInstance) {
-        console.error("io instance not initialized");
+        debugError("io instance not initialized");
         return null;
     }
 
@@ -111,7 +112,7 @@ const createCustomRoom = (socket) => {
     });
 
     socket.join(roomId);
-    console.log(`Custom room created: ${roomId} by ${socket.id}`);
+    debugLog(`Custom room created: ${roomId} by ${socket.id}`);
 
     return { roomId };
 };
@@ -119,7 +120,7 @@ const createCustomRoom = (socket) => {
 //join custom room
 const joinCustomRoom = (socket, roomId) => {
     if (!ioInstance) {
-        console.error("io instance not initialized");
+        debugError("io instance not initialized");
         return null;
     }
 
@@ -144,7 +145,7 @@ const joinCustomRoom = (socket, roomId) => {
         player.join(roomId);
     });
 
-    console.log(`Custom room ${roomId} matched with 2 players`);
+    debugLog(`Custom room ${roomId} matched with 2 players`);
 
     ioInstance.to(match.roomId).emit("matchFound", {
         roomId: match.roomId,
@@ -167,7 +168,7 @@ const tryMatch = ()=>{
     }
 
     if(!ioInstance){
-        console.error("io instance not initialized");
+        debugError("io instance not initialized");
         return null;
     }
 
@@ -185,7 +186,7 @@ const tryMatch = ()=>{
         player.join(roomId);
     });
 
-    console.log(`Match created: ${roomId}`);
+    debugLog(`Match created: ${roomId}`);
 
     ioInstance.to(match.roomId).emit("matchFound", {
         roomId: match.roomId,
@@ -220,7 +221,7 @@ const beginLoadingForRoom = (fightData) => {
     });
 
     startLoadingTimeout(match, actuallyBeginFight);
-    console.log(`[matchmaking] Match ${fightData.roomId} entering loading phase`);
+    debugLog(`[matchmaking] Match ${fightData.roomId} entering loading phase`);
 };
 
 //everyone's confirmed ready (or the loading timeout forced it) - NOW actually
@@ -257,7 +258,7 @@ const actuallyBeginFight = (match) => {
         });
 
         startGameLoop(match.roomId, ioInstance);
-        console.log(`[matchmaking] Match ${match.roomId} started successfully`);
+        debugLog(`[matchmaking] Match ${match.roomId} started successfully`);
     } catch (error) {
         ioInstance.to(match.roomId).emit("matchError", {
             message: "Failed to start match",
@@ -278,7 +279,7 @@ const actuallyBeginFight = (match) => {
 //sets up the match shell and automates character select for it.
 const createBotMatch = (socket) => {
     if(!ioInstance){
-        console.error("io instance not initialized");
+        debugError("io instance not initialized");
         return null;
     }
 
@@ -294,7 +295,7 @@ const createBotMatch = (socket) => {
     const match = createMatch(roomId, [socket, botSocket]);
 
     socket.join(roomId);
-    console.log(`Bot match created: ${roomId} (${socket.id} vs bot)`);
+    debugLog(`Bot match created: ${roomId} (${socket.id} vs bot)`);
 
     ioInstance.to(match.roomId).emit("matchFound", {
         roomId: match.roomId,

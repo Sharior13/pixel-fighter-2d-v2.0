@@ -1,4 +1,5 @@
 const { STATES, setCombatState, canAttack, triggerHitstop, isFrozen } = require('./stateMachine.js');
+const { debugLog } = require("./debug.js");
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
@@ -396,7 +397,7 @@ class AttackHandler {
 
         this.activeAttacks.set(attackId, attackData);
 
-        console.log(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
+        debugLog(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
 
         return {
             success: true,
@@ -452,7 +453,7 @@ class AttackHandler {
         // can't cancel into a move that's on cooldown.
         setCombatState(attacker, STATES.IDLE, gameState.tickCount);
 
-        console.log(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
+        debugLog(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
         return this.initiateAttack(gameState, attacker, requestedMove);
     }
 
@@ -521,7 +522,7 @@ class AttackHandler {
                     attacker.comboWindowEndFrame = 0;
                 }
 
-                console.log(`[AttackHandler] Attack ${attackId} completed`);
+                debugLog(`[AttackHandler] Attack ${attackId} completed`);
             }
         }
 
@@ -576,7 +577,7 @@ class AttackHandler {
             if (inFrontOfAttacker && distanceX <= horizontalRange && distanceY <= verticalRange / 2) {
                 this.applyHit(gameState, attacker, target, attackData);
                 attackData.hasHit = true; // Mark as hit (single hit only)
-                console.log(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
+                debugLog(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
                 break; // Only hit one target
             }
         }
@@ -639,7 +640,7 @@ class AttackHandler {
         // Update attacker stats
         attacker.damage += damage;
 
-        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
+        debugLog(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
     }
 
     clear() {

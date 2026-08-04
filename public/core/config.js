@@ -1,3 +1,4 @@
+import { debugLog, debugWarn } from "./debug.js";
 // Backend URL. Auto-picks local vs. deployed so you don't have to hand-edit
 // this file every time you switch between testing and deploying.
 //
@@ -56,7 +57,7 @@ async function pickFastestRegion() {
 
     try {
         const fastest = await Promise.any(REGIONS.map(pingRegion));
-        console.log(`[Region] Closest server: ${fastest.name} (${fastest.url})`);
+        debugLog(`[Region] Closest server: ${fastest.name} (${fastest.url})`);
         return fastest.url;
     } catch (err) {
         // Promise.any only rejects (with an AggregateError) if EVERY region's health
@@ -64,7 +65,7 @@ async function pickFastestRegion() {
         // configured region and let the actual socket connection attempt it anyway -
         // a failed /health fetch doesn't necessarily mean the backend is really down
         // (e.g. a network that blocks plain HTTP requests but allows websockets).
-        console.warn(`[Region] All region health checks failed, falling back to ${REGIONS[0].name} (${REGIONS[0].url})`, err);
+        debugWarn(`[Region] All region health checks failed, falling back to ${REGIONS[0].name} (${REGIONS[0].url})`, err);
         return REGIONS[0].url;
     }
 }

@@ -1,4 +1,5 @@
 import { ASSET_BASE_URL } from "./config.js";
+import { debugLog, debugWarn, debugError } from "./debug.js";
 
 class SpriteAnimator {
     constructor(spriteSheets, config) {
@@ -21,11 +22,11 @@ class SpriteAnimator {
                     this._loadedCount++;
                     if (this._loadedCount >= this._totalSheets) {
                         this.isLoaded = true;
-                        console.log(`[SpriteAnimator] All sheets loaded: ${this.config.name}`);
+                        debugLog(`[SpriteAnimator] All sheets loaded: ${this.config.name}`);
                     }
                 });
                 img.addEventListener('error', () => {
-                    console.error(`[SpriteAnimator] Failed to load sheet "${name}" for: ${this.config.name}`);
+                    debugError(`[SpriteAnimator] Failed to load sheet "${name}" for: ${this.config.name}`);
                 });
             }
         });
@@ -40,7 +41,7 @@ class SpriteAnimator {
         
         const animation = this.config.animations[this.currentAnimation];
         if (!animation) {
-            console.warn(`[SpriteAnimator] Animation not found: ${this.currentAnimation}`);
+            debugWarn(`[SpriteAnimator] Animation not found: ${this.currentAnimation}`);
             return;
         }
         
@@ -69,7 +70,7 @@ class SpriteAnimator {
         }
         
         if (!this.config.animations[animationName]) {
-            console.warn(`[SpriteAnimator] Animation not found: ${animationName}`);
+            debugWarn(`[SpriteAnimator] Animation not found: ${animationName}`);
             return;
         }
         
@@ -93,7 +94,7 @@ class SpriteAnimator {
 
         const sheet = this.spriteSheets[animation.sheet || 'main'];
         if (!sheet) {
-            console.warn(`[SpriteAnimator] Sheet "${animation.sheet || 'main'}" not found for animation "${this.currentAnimation}"`);
+            debugWarn(`[SpriteAnimator] Sheet "${animation.sheet || 'main'}" not found for animation "${this.currentAnimation}"`);
             return;
         }
         
@@ -174,7 +175,7 @@ class SpriteManager {
 
         const entry = { images, config };
         this.loadedSheets.set(characterId, entry);
-        console.log(`[SpriteManager] Loading sheets for: ${characterId}`);
+        debugLog(`[SpriteManager] Loading sheets for: ${characterId}`);
         return entry;
     }
 
@@ -185,7 +186,7 @@ class SpriteManager {
         const { images } = this._getOrLoadSheets(characterId, config);
         const animator = new SpriteAnimator(images, config);
         this.animators.set(socketId, animator);
-        console.log(`[SpriteManager] Created animator for player: ${socketId} (${characterId})`);
+        debugLog(`[SpriteManager] Created animator for player: ${socketId} (${characterId})`);
         return animator;
     }
 
@@ -218,7 +219,7 @@ class SpriteManager {
 
     unregisterPlayer(socketId) {
         this.animators.delete(socketId);
-        console.log(`[SpriteManager] Unregistered animator for player: ${socketId}`);
+        debugLog(`[SpriteManager] Unregistered animator for player: ${socketId}`);
     }
 
     // clears per-player animators (and their in-progress animation state) between matches.
@@ -226,7 +227,7 @@ class SpriteManager {
     // across rematches/character re-selection.
     clear() {
         this.animators.clear();
-        console.log('[SpriteManager] Cleared all player animators');
+        debugLog('[SpriteManager] Cleared all player animators');
     }
 }
 

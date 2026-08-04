@@ -6,6 +6,7 @@ import { battleUI } from "../ui/battleUI.js";
 import { getPlayerUsername } from "../ui/titleScreen.js";
 import { audioManager } from "./audioManager.js";
 import { simulateTick } from "./prediction.js";
+import { debugLog, debugWarn, isDebugMode } from "./debug.js";
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -101,10 +102,10 @@ const setMap = (mapData)=>{
         bgImg.style.imageRendering = 'pixelated';
 
         bgImg.onload = ()=>{
-            console.log(`[Render] Background image loaded for: ${currentMap.name}`);
+            debugLog(`[Render] Background image loaded for: ${currentMap.name}`);
         };
         bgImg.onerror = ()=>{
-            console.warn(`[Render] Background image not found for: ${currentMap.id}, using solid color`);
+            debugWarn(`[Render] Background image not found for: ${currentMap.id}, using solid color`);
             bgImg = null;
         };
         //insert before the canvas so it renders behind it
@@ -154,7 +155,7 @@ const reconcileLocalPlayer = (state) => {
     const driftX = Math.abs(preSnapX - serverPlayer.position.x);
     const driftY = Math.abs(preSnapY - serverPlayer.position.y);
     if (driftX > 5 || driftY > 5) {
-        console.warn(`[Reconcile] drift: x=${driftX.toFixed(1)} y=${driftY.toFixed(1)}`);
+        debugWarn(`[Reconcile] drift: x=${driftX.toFixed(1)} y=${driftY.toFixed(1)}`);
     }
 
     //snap authoritative fields onto the predicted mirror
@@ -329,7 +330,7 @@ const updateGameState = (state)=>{
             if(previousHealth !== undefined && player.health < previousHealth){
                 //player took damage, play hit sound
                 audioManager.playHitSound(player.character);
-                console.log(`[Render] ${player.socketId} took damage, playing hit sound`);
+                debugLog(`[Render] ${player.socketId} took damage, playing hit sound`);
             }
             
             //update tracker
@@ -357,7 +358,7 @@ const initializePlayerSprites = (player) => {
     const config = characterSpriteConfigs[characterId];
     
     if(!config){
-        console.warn(`[Render] No sprite config found for character: ${characterId}`);
+        debugWarn(`[Render] No sprite config found for character: ${characterId}`);
         return;
     }
     
@@ -365,14 +366,14 @@ const initializePlayerSprites = (player) => {
     if(animator){
         //pass character ID to animationStateManager for audio playback
         animationStateManager.registerPlayer(player.socketId, animator, characterId);
-        console.log(`[Render] Initialized sprites for player: ${player.socketId} (${characterId})`);
+        debugLog(`[Render] Initialized sprites for player: ${player.socketId} (${characterId})`);
     }
 };
 
 const triggerKOAnimation = ()=>{
     showKOOverlay = true;
     koAnimationStartTime = performance.now();
-    console.log('[Render] KO animation triggered');
+    debugLog('[Render] KO animation triggered');
 };
 
 const stopRender = ()=>{
@@ -407,7 +408,7 @@ const stopRender = ()=>{
     spriteManager.clear();
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    console.log("Render stopped");
+    debugLog("Render stopped");
 };
 
 const initializeRender = ()=>{
@@ -416,7 +417,7 @@ const initializeRender = ()=>{
     }
     isRendering = true;
     lastFrameTime = performance.now();
-    console.log("render: ",isRendering);
+    debugLog("render: ",isRendering);
     
     const drawBackground = ()=>{
         if(currentMap && bgImg){
@@ -531,10 +532,29 @@ const initializeRender = ()=>{
         ctx.closePath();
     };
     
+    //debug-only visualization of the player's collision box (same box used
+    //server-side for hit detection - see player.position/size in
+    //server/core/gameState.js). Local player is cyan, opponent is orange, so
+    //they're distinguishable at a glance and don't collide visually with the
+    //existing blue/red used for the no-sprite fallback rect.
+    const drawHitboxOutline = (player) => {
+        ctx.save();
+        ctx.strokeStyle = player.socketId === socket.id ? "#00ffff" : "#ff9900";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(
+            player.position.x - player.size.width / 2,
+            player.position.y - player.size.height,
+            player.size.width,
+            player.size.height
+        );
+        ctx.restore();
+    };
+
     const drawPlayer = (player, deltaTime)=>{
         //defensive check for player data
         if (!player || !player.position || !player.size) {
-            console.warn('[Render] Invalid player data, skipping draw');
+            debugWarn('[Render] Invalid player data, skipping draw');
             return;
         }
         
@@ -550,16 +570,6 @@ const initializeRender = ()=>{
             const config = characterSpriteConfigs[characterId];
             const scale = config?.scale || 2.5;
             
-            //hitbox (debug)
-
-            // ctx.fillStyle = player.socketId === socket.id ? "blue" : "red";
-            // ctx.fillRect(
-            //     player.position.x - player.size.width/2, 
-            //     player.position.y - player.size.height, 
-            //     player.size.width, 
-            //     player.size.height
-            // );
-
             //draw the animated sprite
             animator.draw(
                 ctx,
@@ -579,7 +589,14 @@ const initializeRender = ()=>{
                 player.size.height
             );
         }
-        
+
+        //hitbox outline - only in debug mode (see public/core/debug.js). Drawn
+        //on top of either the sprite or the fallback rect above, so it works
+        //the same way regardless of which one was just drawn.
+        if (isDebugMode()) {
+            drawHitboxOutline(player);
+        }
+
         //display player username above character
         const displayName = player.socketId === socket.id ? getPlayerUsername() : (player.username || player.character?.charAt(0).toUpperCase() + player.character?.slice(1) || 'Player');
         

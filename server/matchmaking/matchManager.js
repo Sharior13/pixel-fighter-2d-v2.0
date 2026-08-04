@@ -1,6 +1,7 @@
 const { GAME_CONFIG } = require('../core/gameState.js')
 const { validateCharacter, getRandomCharacter } = require('../data/characterData.js');
 const { getRandomMap } = require('../data/maps.js');
+const { debugLog } = require("../core/debug.js");
 
 const matches = new Map();
 const lockTimeouts = new Map();
@@ -75,7 +76,7 @@ const selectCharacter = (socket, characterId)=>{
     );
     
     if(isCharacterTaken){
-        console.log(`[MatchManager] Character ${characterId} already selected by another player`);
+        debugLog(`[MatchManager] Character ${characterId} already selected by another player`);
         return { error: 'character_taken' };
     }
 
@@ -103,7 +104,7 @@ const lockCharacter = (socket)=>{
     );
     
     if(isCharacterTaken){
-        console.log(`[MatchManager] Cannot lock - character ${player.character} already selected`);
+        debugLog(`[MatchManager] Cannot lock - character ${player.character} already selected`);
         return { error: 'character_taken' };
     }
 

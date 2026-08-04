@@ -4,6 +4,7 @@ const { createServer} = require('node:http');
 const { Server } = require('socket.io');
 
 const { socketHandler } = require('./networking/socketHandler.js');
+const { debugLog } = require("./core/debug.js");
 
 // Render (and most hosts) inject PORT at runtime - always defer to it, falling
 // back to 2000 for local dev.
@@ -53,5 +54,5 @@ socketHandler(io);
 
 
 server.listen(port, ()=>{
-    console.log(`Server running on port ${port}`);
+    debugLog(`Server running on port ${port}`);
 });

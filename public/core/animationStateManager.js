@@ -1,3 +1,4 @@
+import { debugLog, debugWarn, debugError } from "./debug.js";
 class AnimationStateManager {
     //animation categories for clarity
     static ANIMATIONS = {
@@ -57,7 +58,7 @@ class AnimationStateManager {
 
     registerPlayer(socketId, animator, characterId){
         if(!socketId || !animator){
-            console.error('[AnimationStateManager] Invalid registration parameters');
+            debugError('[AnimationStateManager] Invalid registration parameters');
             return;
         }
 
@@ -78,7 +79,7 @@ class AnimationStateManager {
             isAttacking: false
         });
         
-        console.log(`[AnimationStateManager] Registered player: ${socketId} (${characterId})`);
+        debugLog(`[AnimationStateManager] Registered player: ${socketId} (${characterId})`);
     }
 
     unregisterPlayer(socketId){
@@ -86,23 +87,23 @@ class AnimationStateManager {
         this.playerStates.delete(socketId);
         this.previousFrameData.delete(socketId);
         this.playerCharacters.delete(socketId);
-        console.log(`[AnimationStateManager] Unregistered player: ${socketId}`);
+        debugLog(`[AnimationStateManager] Unregistered player: ${socketId}`);
     }
 
     setAudioManager(audioManager){
         this.audioManager = audioManager;
-        console.log('[AnimationStateManager] Audio manager set');
+        debugLog('[AnimationStateManager] Audio manager set');
     }
 
     updatePlayerAnimation(player, deltaTime){
         if (!player || !player.socketId) {
-            console.warn('[AnimationStateManager] Invalid player object');
+            debugWarn('[AnimationStateManager] Invalid player object');
             return;
         }
 
         const animator = this.playerAnimators.get(player.socketId);
         if(!animator){
-            console.warn(`[AnimationStateManager] No animator found for player: ${player.socketId}`);
+            debugWarn(`[AnimationStateManager] No animator found for player: ${player.socketId}`);
             return;
         }
         
@@ -222,7 +223,7 @@ class AnimationStateManager {
     transitionToAnimation(socketId, targetAnimation, animator, currentAnimState, characterId){
         animator.setAnimation(targetAnimation, true);
         
-        console.log(`[AnimationState] ${socketId}: ${currentAnimState.current} -> ${targetAnimation}`);
+        debugLog(`[AnimationState] ${socketId}: ${currentAnimState.current} -> ${targetAnimation}`);
         
         //play audio when animation successfully starts
         this.playAnimationAudio(socketId, targetAnimation, characterId);
@@ -242,7 +243,7 @@ class AnimationStateManager {
         }
 
         if(!characterId){
-            console.warn(`[AnimationStateManager] No character ID for ${socketId}`);
+            debugWarn(`[AnimationStateManager] No character ID for ${socketId}`);
             return;
         }
 
@@ -267,7 +268,7 @@ class AnimationStateManager {
                 this.audioManager.playAttackSound(characterId, audioAction);
             }
             
-            console.log(`[AnimationStateManager] Playing ${audioAction} sound for ${characterId}`);
+            debugLog(`[AnimationStateManager] Playing ${audioAction} sound for ${characterId}`);
         }
     }
 
@@ -291,7 +292,7 @@ class AnimationStateManager {
     forceAnimation(socketId, animationName, reset = true){
         const animator = this.playerAnimators.get(socketId);
         if (!animator) {
-            console.warn(`[AnimationStateManager] Cannot force animation: No animator for ${socketId}`);
+            debugWarn(`[AnimationStateManager] Cannot force animation: No animator for ${socketId}`);
             return;
         }
         
@@ -301,7 +302,7 @@ class AnimationStateManager {
         if(state){
             state.previous = state.current;
             state.current = animationName;
-            console.log(`[AnimationState] ${socketId}: Forced animation -> ${animationName}`);
+            debugLog(`[AnimationState] ${socketId}: Forced animation -> ${animationName}`);
         }
     }
  
@@ -310,7 +311,7 @@ class AnimationStateManager {
         this.playerStates.clear();
         this.previousFrameData.clear();
         this.playerCharacters.clear();
-        console.log('[AnimationStateManager] Cleared all players');
+        debugLog('[AnimationStateManager] Cleared all players');
     }
 
     getDebugInfo(socketId){

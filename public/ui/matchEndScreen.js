@@ -1,6 +1,7 @@
 import { socket, cleanupSocket } from "../core/socket.js";
 import { titleScreenUI } from "./titleScreen.js";
 import { audioManager } from "../core/audioManager.js";
+import { debugLog, debugError } from "../core/debug.js";
 
 class MatchEndScreen {
     constructor() {
@@ -78,10 +79,10 @@ class MatchEndScreen {
         this.matchData = matchData;
         const { winner, localPlayer, opponent, reason } = matchData;
 
-        console.log('[MatchEndScreen] Showing results');
-        console.log('[MatchEndScreen] Winner:', winner);
-        console.log('[MatchEndScreen] Local player:', localPlayer);
-        console.log('[MatchEndScreen] Opponent:', opponent);
+        debugLog('[MatchEndScreen] Showing results');
+        debugLog('[MatchEndScreen] Winner:', winner);
+        debugLog('[MatchEndScreen] Local player:', localPlayer);
+        debugLog('[MatchEndScreen] Opponent:', opponent);
 
         const isVictory = winner === socket.id;
 
@@ -127,7 +128,7 @@ class MatchEndScreen {
 
     updatePlayerStats(selector, playerData, isWinner) {
         if (!playerData) {
-            console.error('[MatchEndScreen] No player data provided for', selector);
+            debugError('[MatchEndScreen] No player data provided for', selector);
             return;
         }
 
@@ -160,7 +161,7 @@ class MatchEndScreen {
                           (playerData.stats && playerData.stats.maxCombo) || 
                           0;
 
-        console.log(`[MatchEndScreen] ${selector} stats:`, {
+        debugLog(`[MatchEndScreen] ${selector} stats:`, {
             damageDealt,
             damageTaken,
             comboCount,
@@ -188,7 +189,7 @@ class MatchEndScreen {
         // Send rematch request to server
         socket.emit('rematchRequest');
 
-        console.log('[MatchEnd] Rematch requested');
+        debugLog('[MatchEnd] Rematch requested');
     }
 
     returnToMenu() {
@@ -236,7 +237,7 @@ class MatchEndScreen {
     }
 
     handleRematchAccepted() {
-        console.log('[MatchEnd] Rematch accepted! Returning to character select...');
+        debugLog('[MatchEnd] Rematch accepted! Returning to character select...');
         this.hide();
     }
 

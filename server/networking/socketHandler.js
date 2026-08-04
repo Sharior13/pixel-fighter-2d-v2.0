@@ -2,13 +2,14 @@ const { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCust
 const { getMatchBySocket, selectCharacter, lockCharacter, deleteMatch, markPlayerReady, clearLoadingTimeout } = require('../matchmaking/matchManager.js');
 const { processInput, getGameState, deleteGameState, GAME_CONFIG } = require('../core/gameState.js');
 const { handleRematchRequest, handleRematchDecline, clearRematchRequests } = require('../matchmaking/rematchHandler.js');
+const { debugLog, debugWarn } = require("../core/debug.js");
 
 const socketHandler = (io)=>{
 
     //pass io to matchmaking.js
     initMatchmaking(io);
     io.on('connection', (socket)=>{
-        console.log("player connected");
+        debugLog("player connected");
         
         //start match process when player presses quick play or custom room
         socket.on("findMatch", (mode, roomId, username)=>{
@@ -27,7 +28,7 @@ const socketHandler = (io)=>{
             const result = createCustomRoom(socket);
             if (result && result.roomId) {
                 socket.emit("customRoomCreated", { roomId: result.roomId });
-                console.log(`[Socket] Custom room created: ${result.roomId}`);
+                debugLog(`[Socket] Custom room created: ${result.roomId}`);
             } else {
                 socket.emit("customRoomError", { message: "Failed to create room" });
             }
@@ -41,7 +42,7 @@ const socketHandler = (io)=>{
             if (result && result.error) {
                 socket.emit("customRoomError", { message: result.error });
             } else if (result && result.success) {
-                console.log(`[Socket] Player ${socket.id} joined custom room ${roomId}`);
+                debugLog(`[Socket] Player ${socket.id} joined custom room ${roomId}`);
             }
         });
         
@@ -51,7 +52,7 @@ const socketHandler = (io)=>{
         //pulls them out of the queue array and deletes any custom room they
         //created - just without actually dropping the socket connection.
         socket.on("cancelMatchmaking", ()=>{
-            console.log(`[Socket] ${socket.id} cancelled matchmaking`);
+            debugLog(`[Socket] ${socket.id} cancelled matchmaking`);
             removeFromQueue(socket);
         });
 
@@ -91,7 +92,7 @@ const socketHandler = (io)=>{
             });
 
             if(fightData){
-                console.log("All players locked, entering loading phase");
+                debugLog("All players locked, entering loading phase");
 
                 //move to the loading screen - don't touch game state/the tick loop
                 //yet, we wait for every client to confirm it's preloaded assets
@@ -121,7 +122,7 @@ const socketHandler = (io)=>{
             }
 
             if(!Array.isArray(inputs)){
-                console.warn("Invalid input batch");
+                debugWarn("Invalid input batch");
                 return;
             }
             
@@ -156,7 +157,7 @@ const socketHandler = (io)=>{
             }
 
             if(!Array.isArray(inputs)){
-                console.warn("Invalid bot input batch");
+                debugWarn("Invalid bot input batch");
                 return;
             }
 
@@ -167,13 +168,13 @@ const socketHandler = (io)=>{
 
         //rematch logic
         socket.on('rematchRequest', () => {
-            console.log(`[Server] Rematch requested by ${socket.id}`);
+            debugLog(`[Server] Rematch requested by ${socket.id}`);
             handleRematchRequest(socket, io, getMatchBySocket);
         });
 
         //rematch decline logic
         socket.on('rematchDecline', () => {
-            console.log(`[Server] Rematch declined by ${socket.id}`);
+            debugLog(`[Server] Rematch declined by ${socket.id}`);
             handleRematchDecline(socket, io, getMatchBySocket);
         });
 
@@ -182,7 +183,7 @@ const socketHandler = (io)=>{
             const match = getMatchBySocket(socket);
                 
             if (match) {
-                console.log(`[Server] ${socket.id} returning to menu from room ${match.roomId}`);
+                debugLog(`[Server] ${socket.id} returning to menu from room ${match.roomId}`);
                 
                 // Clear rematch requests for this room
                 clearRematchRequests(match.roomId);
@@ -196,7 +197,7 @@ const socketHandler = (io)=>{
 
         //remove players on disconnect
         socket.on("disconnect", ()=>{
-            console.log("Player disconnected");
+            debugLog("Player disconnected");
 
             removeFromQueue(socket);
             

@@ -2,6 +2,7 @@ const { getCharacterData } = require('../data/characterData.js');
 const { getMapData } = require('../data/maps.js');
 const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
+const { debugLog, debugWarn, debugError } = require("./debug.js");
 const { STATES } = stateMachine;
 
 const gameStates = new Map();
@@ -42,13 +43,13 @@ const GAME_CONFIG = {
 //initialize game state when match starts
 const initializeGameState = (roomId, playerData, mapId)=>{
     if(gameStates.has(roomId)){
-        console.warn(`[GameState] Game state already exists for room ${roomId}`);
+        debugWarn(`[GameState] Game state already exists for room ${roomId}`);
         return gameStates.get(roomId);
     }
 
     //load map
     const mapData = getMapData(mapId);
-    console.log(`[GameState] Initializing game with map: ${mapData.name}`);
+    debugLog(`[GameState] Initializing game with map: ${mapData.name}`);
 
     const gameState = {
         roomId,
@@ -72,7 +73,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
             const charData = getCharacterData(p.character);
             
             if(!charData){
-                console.error(`[GameState] Invalid character: ${p.character}`);
+                debugError(`[GameState] Invalid character: ${p.character}`);
                 throw new Error(`Invalid character: ${p.character}`);
             }
 
@@ -196,7 +197,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
     gameState.attackHandler = new AttackHandler();
 
     gameStates.set(roomId, gameState);
-    console.log(`[GameState] Initialized game state for room ${roomId}`);
+    debugLog(`[GameState] Initialized game state for room ${roomId}`);
     
     return gameState;
 };
@@ -373,7 +374,7 @@ const applyDash = (player, currentFrame) => {
     player.dashTimer = GAME_CONFIG.dash.durationFrames;
     player.dashCooldownTimer = GAME_CONFIG.dash.cooldownFrames;
     
-    console.log(`[GameState] Player ${player.socketId} dashed!`);
+    debugLog(`[GameState] Player ${player.socketId} dashed!`);
 
     return { success: true };
 };
@@ -383,13 +384,13 @@ const applyBlock = (player, activate) => {
         if(!player.isBlocking && stateMachine.canStartBlock(player.combatState)){
             player.isBlocking = true;
             player.blockActivatedFrame = player.combatStateEnteredFrame; // approximate, block isn't a combatState itself
-            console.log(`[GameState] Player ${player.socketId} started blocking`);
+            debugLog(`[GameState] Player ${player.socketId} started blocking`);
         }
     } 
     else {
         if(player.isBlocking){
             player.isBlocking = false;
-            console.log(`[GameState] Player ${player.socketId} stopped blocking`);
+            debugLog(`[GameState] Player ${player.socketId} stopped blocking`);
         }
     }
 };
@@ -471,9 +472,9 @@ const consumeOldestValidInput = (gameState, player, currentFrame) => {
             const result = gameState.attackHandler.initiateAttack(gameState, player, input.ability);
             const bufferedFor = currentFrame - bufferedFrame;
             if (result.success) {
-                console.log(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
+                debugLog(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
             } else {
-                console.log(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
+                debugLog(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
             }
             break;
         }
@@ -576,7 +577,7 @@ const gameTick = (roomId, io)=>{
             stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
             player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
-            console.log(`[GameState] ${player.socketId} stun ended`);
+            debugLog(`[GameState] ${player.socketId} stun ended`);
         }
 
         if(player.dashTimer > 0){
@@ -743,7 +744,7 @@ const gameTick = (roomId, io)=>{
                 reason: matchEndCheck.reason
             });
             
-            console.log(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
+            debugLog(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
             
             // Don't delete game state immediately - keep for rematch
             // gameStates.delete(roomId);
@@ -769,11 +770,11 @@ const gameTick = (roomId, io)=>{
 //main server side game loop
 const startGameLoop = (roomId, io)=>{
     if(gameLoopIntervals.has(roomId)){
-        console.warn(`[GameState] Game loop already running for room ${roomId}`);
+        debugWarn(`[GameState] Game loop already running for room ${roomId}`);
         return;
     }
     
-    console.log(`[GameState] Starting game loop for room ${roomId}`);
+    debugLog(`[GameState] Starting game loop for room ${roomId}`);
     
     const intervalId = setInterval(()=>{
         gameTick(roomId, io);
@@ -787,7 +788,7 @@ const stopGameLoop = (roomId)=>{
     if(gameLoopIntervals.has(roomId)){
         clearInterval(gameLoopIntervals.get(roomId));
         gameLoopIntervals.delete(roomId);
-        console.log(`[GameState] Stopped game loop for room ${roomId}`);
+        debugLog(`[GameState] Stopped game loop for room ${roomId}`);
     }
 };
 
@@ -825,7 +826,7 @@ const endMatch = (roomId, io, winner = null)=>{
         }))
     });
     
-    console.log(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
+    debugLog(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
     
     setTimeout(()=>{
         deleteGameState(roomId);
@@ -895,7 +896,7 @@ const getClientGameState = (gameState)=>{
 const deleteGameState = (roomId)=>{
     stopGameLoop(roomId);
     gameStates.delete(roomId);
-    console.log(`[GameState] Deleted game state for room ${roomId}`);
+    debugLog(`[GameState] Deleted game state for room ${roomId}`);
 };
 
 module.exports = { GAME_CONFIG, initializeGameState, getGameState, processInput, startGameLoop, stopGameLoop, endMatch, deleteGameState, getClientGameState };

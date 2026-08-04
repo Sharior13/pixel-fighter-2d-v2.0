@@ -1,3 +1,4 @@
+import { debugLog } from "./debug.js";
 // ============================================================================
 // BOT CONTROLLER - client-side FSM "brain" for the AI opponent
 // ============================================================================
@@ -279,13 +280,13 @@ function tick() {
         if (!comboChaseStartedAt) {
             comboChaseStartedAt = now;
             if (DEBUG_COMBO) {
-                console.log(`[bot] combo chase started: confirmed hit with ${bot.currentAttack} (combo x${bot.combo})`);
+                debugLog(`[bot] combo chase started: confirmed hit with ${bot.currentAttack} (combo x${bot.combo})`);
             }
         }
         const followup = pickCancelFollowup(bot);
         if (followup) {
             if (DEBUG_COMBO) {
-                console.log(`[bot] attempting cancel ${bot.currentAttack} -> ${followup}`);
+                debugLog(`[bot] attempting cancel ${bot.currentAttack} -> ${followup}`);
             }
             triggers.push({ type: "attack", ability: followup });
         }
@@ -307,7 +308,7 @@ function tick() {
         // so the very next tick we're free, decide() runs immediately with
         // fresh position/facing data instead of waiting out a stale timer.
         if (DEBUG_COMBO && comboChaseStartedAt) {
-            console.log(`[bot] combo chase window closed on ${bot.currentAttack}, riding out recovery`);
+            debugLog(`[bot] combo chase window closed on ${bot.currentAttack}, riding out recovery`);
             comboChaseStartedAt = 0;
         }
         moveDirection = 0;
@@ -332,7 +333,7 @@ function logDecision(reason, bot, dist) {
         return;
     }
     lastLoggedReason = reason;
-    console.log(
+    debugLog(
         `[bot] ${reason} | dist=${dist.toFixed(0)} facing=${bot.facing} hp=${(bot.health / (bot.maxHealth || 1) * 100).toFixed(0)}% ` +
         `cooldowns=${JSON.stringify(bot.cooldowns)}`
     );
@@ -427,7 +428,7 @@ function decide(bot, opponent, triggers, now) {
 
     const ability = pickAbility(bot, dist);
     if (ability) {
-        if (DEBUG_FSM) console.log(`[bot] ATTACK -> ${ability}`);
+        if (DEBUG_FSM) debugLog(`[bot] ATTACK -> ${ability}`);
         lastLoggedReason = null; // always allow the next state change to log, even if it's back to the same reason as before this attack
         triggers.push({ type: "attack", ability });
     } else {

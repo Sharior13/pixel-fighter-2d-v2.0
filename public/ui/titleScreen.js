@@ -5,6 +5,7 @@ import "../core/input.js";
 import { audioManager } from "../core/audioManager.js";
 import { ASSET_BASE_URL } from "../core/config.js";
 import "./touchControls.js";
+import { debugLog, debugWarn, debugError, notify } from "../core/debug.js";
 
 class TitleScreenUI {
     constructor() {
@@ -88,7 +89,7 @@ class TitleScreenUI {
             const roomName = roomNameInput.value.trim();
             
             if (!roomName) {
-                alert("Please enter a room name");
+                notify("Please enter a room name");
                 return;
             }
 
@@ -103,12 +104,12 @@ class TitleScreenUI {
             const roomId = roomIdInput.value.trim().toUpperCase();
             
             if (!roomId) {
-                alert("Please enter a room ID");
+                notify("Please enter a room ID");
                 return;
             }
 
             if (roomId.length !== 5) {
-                alert("Room ID must be 5 characters");
+                notify("Room ID must be 5 characters");
                 return;
             }
 
@@ -192,20 +193,20 @@ class TitleScreenUI {
             });
         }
         
-        console.log('[TitleScreenUI] Settings initialized');
+        debugLog('[TitleScreenUI] Settings initialized');
     }
     
     showSettings() {
         if (this.settingsContainer) {
             this.settingsContainer.classList.remove('hidden');
-            console.log('[TitleScreenUI] Settings shown');
+            debugLog('[TitleScreenUI] Settings shown');
         }
     }
     
     hideSettings() {
         if (this.settingsContainer) {
             this.settingsContainer.classList.add('hidden');
-            console.log('[TitleScreenUI] Settings hidden');
+            debugLog('[TitleScreenUI] Settings hidden');
         }
     }
     
@@ -248,9 +249,9 @@ class TitleScreenUI {
         
         try {
             localStorage.setItem('gameSettings', JSON.stringify(settings));
-            console.log('[TitleScreenUI] Settings saved');
+            debugLog('[TitleScreenUI] Settings saved');
         } catch (error) {
-            console.error('[TitleScreenUI] Failed to save settings:', error);
+            debugError('[TitleScreenUI] Failed to save settings:', error);
         }
     }
     
@@ -275,10 +276,10 @@ class TitleScreenUI {
                     this.sfxValueDisplay.textContent = settings.sfxVolume + '%';
                 }
                 
-                console.log('[TitleScreenUI] Settings loaded');
+                debugLog('[TitleScreenUI] Settings loaded');
             }
         } catch (error) {
-            console.error('[TitleScreenUI] Failed to load settings:', error);
+            debugError('[TitleScreenUI] Failed to load settings:', error);
         }
     }
     
@@ -306,14 +307,14 @@ class TitleScreenUI {
             this.showTitleScreen();
         };
         
-        console.log('[TitleScreenUI] Profile initialized');
+        debugLog('[TitleScreenUI] Profile initialized');
     }
     
     showProfile() {
         if (this.profileContainer) {
             this.profileContainer.classList.remove('hidden');
             this.profileContainer.style.display = "flex";
-            console.log('[TitleScreenUI] Profile shown');
+            debugLog('[TitleScreenUI] Profile shown');
         }
     }
     
@@ -321,7 +322,7 @@ class TitleScreenUI {
         if (this.profileContainer) {
             this.profileContainer.classList.add('hidden');
             this.profileContainer.style.display = "none";
-            console.log('[TitleScreenUI] Profile hidden');
+            debugLog('[TitleScreenUI] Profile hidden');
         }
     }
     
@@ -333,7 +334,7 @@ class TitleScreenUI {
             this.usernameInput.value = trimmedUsername;
         }
         
-        console.log('[TitleScreenUI] Username updated:', trimmedUsername);
+        debugLog('[TitleScreenUI] Username updated:', trimmedUsername);
     }
     
     saveProfile() {
@@ -344,9 +345,9 @@ class TitleScreenUI {
         
         try {
             localStorage.setItem('userProfile', JSON.stringify(profile));
-            console.log('[TitleScreenUI] Profile saved:', profile.username);
+            debugLog('[TitleScreenUI] Profile saved:', profile.username);
         } catch (error) {
-            console.error('[TitleScreenUI] Failed to save profile:', error);
+            debugError('[TitleScreenUI] Failed to save profile:', error);
         }
     }
     
@@ -364,13 +365,13 @@ class TitleScreenUI {
                     this.avatarImage.src = profile.avatarUrl;
                 }
                 
-                console.log('[TitleScreenUI] Profile loaded');
+                debugLog('[TitleScreenUI] Profile loaded');
             } else {
                 // Set default avatar
                 this.setDefaultAvatar();
             }
         } catch (error) {
-            console.error('[TitleScreenUI] Failed to load profile:', error);
+            debugError('[TitleScreenUI] Failed to load profile:', error);
             this.setDefaultAvatar();
         }
     }
@@ -380,7 +381,7 @@ class TitleScreenUI {
             // Set a default avatar or placeholder
             this.avatarImage.src = `${ASSET_BASE_URL}/characters/rukia/rukia-icon.png`;
             this.avatarImage.onerror = () => {
-                console.warn('[TitleScreenUI] Failed to load avatar image');
+                debugWarn('[TitleScreenUI] Failed to load avatar image');
                 // Set a simple colored background instead
                 this.avatarImage.style.display = 'none';
                 this.avatarImage.parentElement.style.background = '#8B4513';

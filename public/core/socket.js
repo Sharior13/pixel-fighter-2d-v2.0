@@ -10,6 +10,7 @@ import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
 import { loadingScreenUI } from "../ui/loadingScreen.js";
 import { showStatusBanner, hideStatusBanner } from "../ui/statusBanner.js";
 import { preloadMatchAssets } from "./assetPreloader.js";
+import { debugLog, notify } from "./debug.js";
 
 let socket = null;
 let inMatch = false;
@@ -56,11 +57,11 @@ const initializeSocket = async (mode, roomId) => {
     // Passing serverUrl connects to a separately-deployed backend over WSS.
     socket = io(serverUrl, { transports: ["websocket"], upgrade: false, timeout: 60000 });
 
-    socket.on("disconnect", (reason) => console.log("[Socket] disconnected:", reason));
-    socket.on("connect_error", (err) => console.log("[Socket] connect_error:", err.message));
+    socket.on("disconnect", (reason) => debugLog("[Socket] disconnected:", reason));
+    socket.on("connect_error", (err) => debugLog("[Socket] connect_error:", err.message));
 
     const username = titleScreenUI.getUsername();
-    console.log('[Socket] Sending username:', username);
+    debugLog('[Socket] Sending username:', username);
     //start match process
     if(mode === "quickStart"){
         socket.emit("findMatch", mode, roomId, username);
@@ -87,7 +88,7 @@ const initializeSocket = async (mode, roomId) => {
     });
 
     socket.on("customRoomCreated", ({ roomId }) => {
-        console.log("Custom room created:", roomId);
+        debugLog("Custom room created:", roomId);
         document.getElementById("queuing").classList.remove("hidden");
         document.getElementById("queuing").innerHTML = `
             <div style="text-align: center;">
@@ -100,7 +101,7 @@ const initializeSocket = async (mode, roomId) => {
     });
 
     socket.on("customRoomError", ({ message }) => {
-        alert(message);
+        notify(message);
         document.getElementById("queuing").classList.add("hidden");
         cleanupSocket();
         stopRender();
@@ -109,7 +110,7 @@ const initializeSocket = async (mode, roomId) => {
 
     socket.on("matchFound", ({ roomId, playerIndex }) => {
         inMatch = true;
-        console.log("Match found!", roomId);
+        debugLog("Match found!", roomId);
         document.getElementById("queuing").classList.add("hidden");
 
         showStatusBanner("Match Found!", { duration: 1100, variant: 'success' });
@@ -188,7 +189,7 @@ const initializeSocket = async (mode, roomId) => {
 
         //play map music
         if (map && map.id) {
-            console.log('[Socket] Playing map music:', map.id);
+            debugLog('[Socket] Playing map music:', map.id);
             audioManager.stopMusic(true);
             audioManager.playMapMusic(map.id);
         }
@@ -215,14 +216,14 @@ const initializeSocket = async (mode, roomId) => {
     });
 
     socket.on('knockoutAnimation', (data) => {
-        console.log('[Socket] Knockout animation triggered', data);
+        debugLog('[Socket] Knockout animation triggered', data);
         triggerKOAnimation();
     });
 
     //handle match end
     socket.on("matchEnd", ({ winner, finalStats, reason }) => {
-        console.log("Match ended! Winner:", winner);
-        console.log("Final stats:", finalStats);
+        debugLog("Match ended! Winner:", winner);
+        debugLog("Final stats:", finalStats);
         
         setTimeout(() => {
            //stop game loop
@@ -235,8 +236,8 @@ const initializeSocket = async (mode, roomId) => {
             const localPlayer = finalStats.find(p => p.socketId === socket.id);
             const opponent = finalStats.find(p => p.socketId !== socket.id);
             
-            console.log('[Socket] Local player stats:', localPlayer);
-            console.log('[Socket] Opponent stats:', opponent);
+            debugLog('[Socket] Local player stats:', localPlayer);
+            debugLog('[Socket] Opponent stats:', opponent);
             
             matchEndScreen.show({
                 winner,
@@ -267,25 +268,25 @@ const initializeSocket = async (mode, roomId) => {
 
     //handle rematch responses
     socket.on("rematchAccepted", ({ roomId }) => {
-        console.log("Rematch accepted!");
+        debugLog("Rematch accepted!");
         matchEndScreen.handleRematchAccepted();
         openCharacterSelect();
     });
 
     socket.on("rematchDeclined", () => {
-        console.log("Rematch declined by opponent");
+        debugLog("Rematch declined by opponent");
         matchEndScreen.handleRematchDeclined();
     });
 
     socket.on("playerReturnedToMenu", (socketId) => {
-        console.log("Opponent returned to menu");
+        debugLog("Opponent returned to menu");
         if (matchEndScreen.isWaitingForRematch) {
             matchEndScreen.handleRematchDeclined();
         }
     });
 
     socket.on("matchError", ({ message, reason }) => {
-        console.log("Match error: ", message, reason);
+        debugLog("Match error: ", message, reason);
         document.getElementById("character-select").style.display = "none";
         loadingScreenUI.hide();
         battleUI.hide();
@@ -455,7 +456,7 @@ const cleanupSocket = () => {
         socket = null;
     }
     
-    console.log('[Socket] Cleaned up socket connection');
+    debugLog('[Socket] Cleaned up socket connection');
 };
 
 export { initializeSocket, cleanupSocket, socket, pendingInputs };

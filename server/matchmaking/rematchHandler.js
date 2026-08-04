@@ -1,6 +1,7 @@
 const { deleteGameState } = require('../core/gameState.js');
 const { createMatch, startCharacterSelectTimeout, deleteMatch } = require('./matchManager.js');
 const { beginLoadingForRoom } = require('./matchMaking.js');
+const { debugLog } = require("../core/debug.js");
 
 const rematchRequests = new Map(); // roomId -> Set of socket IDs who want rematch
 
@@ -8,7 +9,7 @@ const handleRematchRequest = (socket, io, getMatchBySocket) => {
     const match = getMatchBySocket(socket);
     
     if (!match) {
-        console.log(`[Rematch] No match found for ${socket.id}`);
+        debugLog(`[Rematch] No match found for ${socket.id}`);
         return;
     }
 
@@ -22,11 +23,11 @@ const handleRematchRequest = (socket, io, getMatchBySocket) => {
     const requests = rematchRequests.get(roomId);
     requests.add(socket.id);
 
-    console.log(`[Rematch] ${socket.id} wants rematch in ${roomId}. Total requests: ${requests.size}/${match.players.length}`);
+    debugLog(`[Rematch] ${socket.id} wants rematch in ${roomId}. Total requests: ${requests.size}/${match.players.length}`);
 
     // If all players want rematch
     if (requests.size === match.players.length) {
-        console.log(`[Rematch] All players agreed! Starting rematch for room ${roomId}`);
+        debugLog(`[Rematch] All players agreed! Starting rematch for room ${roomId}`);
         
         // Clear rematch requests
         rematchRequests.delete(roomId);
@@ -67,7 +68,7 @@ const handleRematchDecline = (socket, io, getMatchBySocket) => {
     // Notify all players that rematch was declined
     io.to(roomId).emit("rematchDeclined");
 
-    console.log(`[Rematch] ${socket.id} declined rematch in ${roomId}`);
+    debugLog(`[Rematch] ${socket.id} declined rematch in ${roomId}`);
 };
 
 const clearRematchRequests = (roomId) => {
