@@ -255,6 +255,37 @@ class AudioManager{
         console.log(`[AudioManager] Preloaded sounds for: ${characterId}`);
     }
     
+    // Promise-based version for the loading screen: resolves once every sound for
+    // this character has either become playable or failed to load. A failed/missing
+    // sound file (404, etc.) still resolves rather than rejects - one missing .ogg
+    // shouldn't hang the loading screen forever, it'll just silently no-op later if
+    // played (same as today). Also populates this.preloadedSounds same as the
+    // synchronous preloadCharacterSounds() above, so this can fully replace it.
+    preloadCharacterSoundsAsync(characterId){
+        const sounds = ['attack', 'basic', 'special', 'ultimate', 'hit', 'jump'];
+
+        const loadPromises = sounds.map(sound => {
+            const soundPath = `${ASSET_BASE_URL}/characters/${characterId}/${characterId}-${sound}.ogg`;
+            const audio = new Audio(soundPath);
+            audio.preload = 'auto';
+
+            const key = `${characterId}_${sound}`;
+            this.preloadedSounds.set(key, audio);
+
+            if(audio.readyState >= 4){ // HAVE_ENOUGH_DATA
+                return Promise.resolve();
+            }
+
+            return new Promise(resolve => {
+                audio.addEventListener('canplaythrough', resolve, { once: true });
+                audio.addEventListener('error', resolve, { once: true });
+            });
+        });
+
+        console.log(`[AudioManager] Preloading sounds for: ${characterId}`);
+        return Promise.all(loadPromises);
+    }
+
     unloadCharacterSounds(characterId){
         const sounds = ['attack', 'basic', 'special', 'ultimate', 'hit', 'jump'];
         

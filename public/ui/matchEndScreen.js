@@ -17,6 +17,7 @@ class MatchEndScreen {
         screen.innerHTML = `
             <div class="result-container">
                 <div class="result-text"></div>
+                <div class="result-subtext"></div>
                 <div class="match-stats">
                     <div class="player-stats player1-stats">
                         <div class="player-label">YOU</div>
@@ -86,6 +87,7 @@ class MatchEndScreen {
 
         // Set result text and styling
         const resultText = this.screenElement.querySelector('.result-text');
+        const resultSubtext = this.screenElement.querySelector('.result-subtext');
         const resultContainer = this.screenElement.querySelector('.result-container');
 
         if (isVictory) {
@@ -96,6 +98,20 @@ class MatchEndScreen {
             resultText.textContent = 'DEFEAT';
             resultText.classList.add('defeat');
             resultContainer.classList.add('defeat');
+        }
+
+        if (resultSubtext) {
+            resultSubtext.textContent = reason === 'opponent_disconnected' ? 'Opponent disconnected' : '';
+        }
+
+        // If the opponent already left, there's no one to rematch with - disable
+        // the button so the player isn't left waiting on a request that can never
+        // be accepted.
+        this.opponentLeft = reason === 'opponent_disconnected';
+        const rematchBtn = document.getElementById('rematch-btn');
+        if (rematchBtn) {
+            rematchBtn.disabled = this.opponentLeft;
+            rematchBtn.textContent = this.opponentLeft ? 'Opponent Left' : 'Rematch';
         }
 
         // Fill in stats
@@ -157,7 +173,7 @@ class MatchEndScreen {
     }
 
     requestRematch() {
-        if (!socket || this.isWaitingForRematch) {
+        if (!socket || this.isWaitingForRematch || this.opponentLeft) {
             return;
         }
 
@@ -210,9 +226,11 @@ class MatchEndScreen {
         });
 
         // Reset buttons
+        this.opponentLeft = false;
         const rematchBtn = document.getElementById('rematch-btn');
         if (rematchBtn) {
             rematchBtn.disabled = false;
+            rematchBtn.textContent = 'Rematch';
         }
         this.screenElement.querySelector('.waiting-text').style.display = 'none';
     }

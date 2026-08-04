@@ -1,6 +1,6 @@
-const { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom } = require('../matchmaking/matchMaking.js');
-const { getMatchBySocket, selectCharacter, lockCharacter, deleteMatch } = require('../matchmaking/matchManager.js');
-const { initializeGameState, processInput, startGameLoop, getGameState, deleteGameState, GAME_CONFIG } = require('../core/gameState.js');
+const { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight } = require('../matchmaking/matchMaking.js');
+const { getMatchBySocket, selectCharacter, lockCharacter, deleteMatch, markPlayerReady, clearLoadingTimeout } = require('../matchmaking/matchManager.js');
+const { processInput, getGameState, deleteGameState, GAME_CONFIG } = require('../core/gameState.js');
 const { handleRematchRequest, handleRematchDecline, clearRematchRequests } = require('../matchmaking/rematchHandler.js');
 
 const socketHandler = (io)=>{
@@ -45,6 +45,16 @@ const socketHandler = (io)=>{
             }
         });
         
+        //player backed out while waiting in quick-play queue or a custom room
+        //they created (see the Cancel button in public/core/socket.js). Reuses
+        //the exact same cleanup removeFromQueue() already does on disconnect -
+        //pulls them out of the queue array and deletes any custom room they
+        //created - just without actually dropping the socket connection.
+        socket.on("cancelMatchmaking", ()=>{
+            console.log(`[Socket] ${socket.id} cancelled matchmaking`);
+            removeFromQueue(socket);
+        });
+
         //receive player selected character in character selecting phase
         socket.on("selectCharacter", (characterId)=>{
             const match = selectCharacter(socket, characterId);
@@ -81,48 +91,24 @@ const socketHandler = (io)=>{
             });
 
             if(fightData){
-                console.log("All players locked, starting match");
-                
-                //initialize server-authoritative game state
-                try{
-                    // Add usernames to player data
-                    const playersWithUsernames = fightData.players.map(p => {
-                        const playerSocket = io.sockets.sockets.get(p.socketId);
-                        const username = playerSocket?.username || "Player";
-                        console.log(`[SocketHandler] Player ${p.socketId} username: "${username}"`);
-                        return {
-                            ...p,
-                            username: username
-                        };
-                    });
-                    
-                    const gameState = initializeGameState(fightData.roomId, playersWithUsernames, fightData.mapId);
-                    
-                    //emit startMatch with initial game state
-                    io.to(fightData.roomId).emit("startMatch", {
-                        roomId: fightData.roomId,
-                        players: playersWithUsernames,
-                        map: gameState.map,
-                        gameState: {
-                            players: gameState.players.map(p => ({
-                                socketId: p.socketId,
-                                playerIndex: p.playerIndex,
-                                character: p.character,
-                                username: p.username,
-                                position: p.position,
-                                health: p.health,
-                                maxHealth: p.maxHealth
-                            }))
-                        }
-                    });
-                    
-                    //start the server-side game loop
-                    startGameLoop(fightData.roomId, io);
-                } catch(error){
-                    io.to(fightData.roomId).emit("matchError", {
-                        message: "Failed to start match"
-                    });
-                }
+                console.log("All players locked, entering loading phase");
+
+                //move to the loading screen - don't touch game state/the tick loop
+                //yet, we wait for every client to confirm it's preloaded assets
+                //first (see "clientReadyForMatch" below)
+                beginLoadingForRoom(fightData);
+            }
+        });
+
+        //a client has finished preloading character/map assets for the match it
+        //was just told about (see "matchLoading" emit above / in matchMaking.js)
+        //and is ready for the fight to actually begin.
+        socket.on("clientReadyForMatch", ()=>{
+            const readyMatch = markPlayerReady(socket);
+
+            //null means we're still waiting on the other player - nothing to do yet
+            if(readyMatch){
+                actuallyBeginFight(readyMatch);
             }
         });
 
@@ -224,10 +210,12 @@ const socketHandler = (io)=>{
 
             io.to(match.roomId).emit("playerDisconnected", socket.id);
 
-            if(match.phase === "CHARACTER_SELECT"){
+            if(match.phase === "CHARACTER_SELECT" || match.phase === "LOADING"){
+                clearLoadingTimeout(match.roomId);
                 deleteGameState(match.roomId);
                 deleteMatch(match.roomId);
                 io.to(match.roomId).emit("matchError", {
+                    message: "Opponent disconnected",
                     reason: "opponent_disconnected"
                 });
             } 

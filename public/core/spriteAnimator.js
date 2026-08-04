@@ -193,6 +193,29 @@ class SpriteManager {
         return this.animators.get(socketId);
     }
 
+    // Promise-based preload for the loading screen: resolves once every sheet for
+    // this character has either loaded or failed (a failed sheet still resolves -
+    // we don't want one bad asset to hang the loading screen forever, the existing
+    // draw()/SpriteAnimator fallback already handles an unloaded sheet gracefully).
+    // Safe to call even if _getOrLoadSheets() already kicked off (or finished) these
+    // loads earlier - Image objects are cached per-character, so this just attaches
+    // to whatever's already in flight instead of re-requesting anything.
+    preloadCharacterSheets(characterId, config) {
+        const { images } = this._getOrLoadSheets(characterId, config);
+
+        const loadPromises = Object.values(images).map(img => {
+            if (img.complete) {
+                return Promise.resolve();
+            }
+            return new Promise(resolve => {
+                img.addEventListener('load', resolve, { once: true });
+                img.addEventListener('error', resolve, { once: true });
+            });
+        });
+
+        return Promise.all(loadPromises);
+    }
+
     unregisterPlayer(socketId) {
         this.animators.delete(socketId);
         console.log(`[SpriteManager] Unregistered animator for player: ${socketId}`);

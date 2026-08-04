@@ -1,4 +1,4 @@
-const { matches, createMatch, getMatch, startCharacterSelectTimeout, selectCharacter, lockCharacter } = require("./matchManager.js");
+const { matches, createMatch, getMatch, startCharacterSelectTimeout, selectCharacter, lockCharacter, startLoadingTimeout } = require("./matchManager.js");
 const { initializeGameState, startGameLoop } = require("../core/gameState.js");
 const { getRandomCharacter } = require("../data/characterData.js");
 
@@ -155,7 +155,7 @@ const joinCustomRoom = (socket, roomId) => {
     });
 
     // Start the character selection timeout
-    startCharacterSelectTimeout(match, startFightForRoom);
+    startCharacterSelectTimeout(match, beginLoadingForRoom);
 
     return { success: true, match };
 };
@@ -197,21 +197,52 @@ const tryMatch = ()=>{
     });
 
     // start the character selection timeout
-    startCharacterSelectTimeout(match, startFightForRoom);
+    startCharacterSelectTimeout(match, beginLoadingForRoom);
 
     return match;
 };
 
-//shared "all players locked in, actually start the fight" logic - used by
+//shared "all players locked in, move to the loading screen" logic - used by
 //the character-select timeout (real matches) and by the bot's own lock-in
-//(see scheduleBotCharacterSelection below), so there's exactly one place
-//that initializes game state and kicks off the game loop.
-const startFightForRoom = (fightData) => {
+//(see scheduleBotCharacterSelection below). Tells clients which characters/map
+//to preload, then waits for everyone to ack "clientReadyForMatch" (or the
+//loading timeout below to fire) before the fight actually begins.
+const beginLoadingForRoom = (fightData) => {
+    const match = getMatch(fightData.roomId);
+    if (!match) {
+        return;
+    }
+
+    ioInstance.to(fightData.roomId).emit("matchLoading", {
+        roomId: fightData.roomId,
+        players: fightData.players,
+        mapId: fightData.mapId
+    });
+
+    startLoadingTimeout(match, actuallyBeginFight);
+    console.log(`[matchmaking] Match ${fightData.roomId} entering loading phase`);
+};
+
+//everyone's confirmed ready (or the loading timeout forced it) - NOW actually
+//initialize server-authoritative game state and start the tick loop. This is
+//the single place that happens, whether reached via the ready-handshake or
+//the safety-net timeout.
+const actuallyBeginFight = (match) => {
     try {
-        const gameState = initializeGameState(fightData.roomId, fightData.players, fightData.mapId);
-        ioInstance.to(fightData.roomId).emit("startMatch", {
-            roomId: fightData.roomId,
-            players: fightData.players,
+        match.phase = "FIGHT";
+
+        const playersWithUsernames = match.players.map(p => ({
+            socketId: p.socketId,
+            playerIndex: p.playerIndex,
+            character: p.character,
+            username: p.username,
+            isBot: !!p.isBot
+        }));
+
+        const gameState = initializeGameState(match.roomId, playersWithUsernames, match.mapId);
+
+        ioInstance.to(match.roomId).emit("matchBegin", {
+            roomId: match.roomId,
             map: gameState.map,
             gameState: {
                 players: gameState.players.map(p => ({
@@ -225,11 +256,12 @@ const startFightForRoom = (fightData) => {
             }
         });
 
-        startGameLoop(fightData.roomId, ioInstance);
-        console.log(`[matchmaking] Match ${fightData.roomId} started successfully`);
+        startGameLoop(match.roomId, ioInstance);
+        console.log(`[matchmaking] Match ${match.roomId} started successfully`);
     } catch (error) {
-        ioInstance.to(fightData.roomId).emit("matchError", {
-            message: "Failed to start match"
+        ioInstance.to(match.roomId).emit("matchError", {
+            message: "Failed to start match",
+            reason: "start_failed"
         });
     }
 };
@@ -273,7 +305,7 @@ const createBotMatch = (socket) => {
         }))
     });
 
-    startCharacterSelectTimeout(match, startFightForRoom);
+    startCharacterSelectTimeout(match, beginLoadingForRoom);
     scheduleBotCharacterSelection(match, botId);
 
     return match;
@@ -328,7 +360,7 @@ const scheduleBotCharacterSelection = (match, botId) => {
             });
 
             if(fightData){
-                startFightForRoom(fightData);
+                beginLoadingForRoom(fightData);
             }
         }, lockDelay);
     }, pickDelay);
@@ -368,4 +400,4 @@ const generateRoomCode = (length = 5)=>{
     return code;
 };
 
-module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom };
+module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight };

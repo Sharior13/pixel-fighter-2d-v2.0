@@ -41,7 +41,7 @@ const DIFFICULTY = {
     // Grace period (ms) at the very start of a match before the bot will
     // throw its first attack or block. Kept short rather than instant so
     // the very first exchange doesn't feel like it's reading the spawn
-    // event - see public/core/socket.js's "startMatch" handler.
+    // event - see public/core/socket.js's "matchBegin" handler.
     initialActionDelayMs: [150, 350],
 
     // Preferred spacing in pixels, roughly matched to the ~60-250px attack

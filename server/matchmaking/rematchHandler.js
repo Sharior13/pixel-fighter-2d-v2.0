@@ -1,5 +1,6 @@
-const { initializeGameState, startGameLoop, deleteGameState } = require('../core/gameState.js');
+const { deleteGameState } = require('../core/gameState.js');
 const { createMatch, startCharacterSelectTimeout, deleteMatch } = require('./matchManager.js');
+const { beginLoadingForRoom } = require('./matchMaking.js');
 
 const rematchRequests = new Map(); // roomId -> Set of socket IDs who want rematch
 
@@ -43,35 +44,11 @@ const handleRematchRequest = (socket, io, getMatchBySocket) => {
             roomId: newMatch.roomId
         });
 
-        // Start character selection timeout
-        startCharacterSelectTimeout(newMatch, (fightData) => {
-            try {
-                const gameState = initializeGameState(fightData.roomId, fightData.players, fightData.mapId);
-                io.to(fightData.roomId).emit("startMatch", {
-                    roomId: fightData.roomId,
-                    players: fightData.players,
-                    map: gameState.map,
-                    gameState: {
-                        players: gameState.players.map(p => ({
-                            socketId: p.socketId,
-                            playerIndex: p.playerIndex,
-                            character: p.character,
-                            position: p.position,
-                            health: p.health,
-                            maxHealth: p.maxHealth
-                        }))
-                    }
-                });
-
-                startGameLoop(fightData.roomId, io);
-                console.log("[Rematch] Match started successfully");
-            } catch (error) {
-                console.error("[Rematch] Error starting match:", error);
-                io.to(fightData.roomId).emit("matchError", {
-                    message: "Failed to start rematch"
-                });
-            }
-        });
+        // Start character selection timeout - once everyone's locked in, this goes
+        // through the same loading-screen/ready-handshake gate as a fresh match
+        // (see beginLoadingForRoom/actuallyBeginFight in matchMaking.js) rather than
+        // starting the game loop immediately.
+        startCharacterSelectTimeout(newMatch, beginLoadingForRoom);
     }
 };
 

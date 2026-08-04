@@ -7,11 +7,19 @@ import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
 import { SERVER_URL } from "./config.js";
 import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
+import { loadingScreenUI } from "../ui/loadingScreen.js";
+import { showStatusBanner, hideStatusBanner } from "../ui/statusBanner.js";
+import { preloadMatchAssets } from "./assetPreloader.js";
 
 let socket = null;
 let inMatch = false;
 let inputInterval = null;
 let currentCharacterId = null;
+
+// stashed from "matchLoading" (which carries isBot) so "matchBegin" - whose nested
+// gameState.players doesn't repeat that flag - still knows whether to spin up the
+// client-side bot FSM.
+let pendingOpponentIsBot = false;
 
 // client-side prediction bookkeeping
 let inputSequence = 0;
@@ -56,7 +64,12 @@ const initializeSocket = (mode, roomId) => {
         }
 
         document.getElementById("queuing").classList.remove("hidden");
-        document.getElementById("queuing").innerHTML = `<p>Queue started!</p>`;
+        document.getElementById("queuing").innerHTML = `
+            <div style="text-align: center;">
+                <p>Queue started!</p>
+                <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
+            </div>
+        `;
     });
 
     socket.on("customRoomCreated", ({ roomId }) => {
@@ -67,6 +80,7 @@ const initializeSocket = (mode, roomId) => {
                 <p>Custom Room Created!</p>
                 <p style="font-size: 24px; font-weight: bold; margin: 10px 0;">Room ID: ${roomId}</p>
                 <p style="font-size: 14px; color: #888;">Waiting for opponent to join...</p>
+                <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
             </div>
         `;
     });
@@ -83,7 +97,11 @@ const initializeSocket = (mode, roomId) => {
         inMatch = true;
         console.log("Match found!", roomId);
         document.getElementById("queuing").classList.add("hidden");
-        openCharacterSelect();
+
+        showStatusBanner("Match Found!", { duration: 1100, variant: 'success' });
+        setTimeout(() => {
+            openCharacterSelect();
+        }, 1100);
     });
 
     socket.on("characterPreview", ({ socketId, characterId }) => {
@@ -103,7 +121,7 @@ const initializeSocket = (mode, roomId) => {
         document.getElementById('p2-label').classList.add('active');
     });
 
-    socket.on("startMatch", (gameState) => {
+    socket.on("matchLoading", ({ roomId, players, mapId }) => {
         // The client has been sending seq/tick-tagged inputs since initializeSocket() was
         // called (queue + character select), but the server ignores all of those (match
         // phase isn't FIGHT yet), so their seq numbers never become lastProcessedSeq. If we
@@ -118,35 +136,55 @@ const initializeSocket = (mode, roomId) => {
         document.getElementById("character-select").style.display = "none";
         canvas.style.backgroundImage = 'none';
 
-        setMap(gameState.map);
-        
-        //play map music
-        if (gameState.map && gameState.map.id) {
-            console.log('[Socket] Playing map music:', gameState.map.id);
-            audioManager.stopMusic(true);
-            audioManager.playMapMusic(gameState.map.id);
-        }
-        
-        //find local player's character and preload sounds
-        const localPlayer = gameState.players.find(p => p.socketId === socket.id);
+        const localPlayer = players.find(p => p.socketId === socket.id);
+        const opponent = players.find(p => p.socketId !== socket.id);
+
         if (localPlayer && localPlayer.character) {
             currentCharacterId = localPlayer.character;
-            audioManager.preloadCharacterSounds(localPlayer.character);
-            console.log('[Socket] Preloaded sounds for:', localPlayer.character);
         }
-        
-        //preload opponent's sounds too
-        const opponent = gameState.players.find(p => p.socketId !== socket.id);
-        if (opponent && opponent.character) {
-            audioManager.preloadCharacterSounds(opponent.character);
-            console.log('[Socket] Preloaded opponent sounds for:', opponent.character);
+        pendingOpponentIsBot = !!(opponent && opponent.isBot);
+
+        loadingScreenUI.show(players, socket.id);
+
+        preloadMatchAssets(players, mapId, (loaded, total) => {
+            loadingScreenUI.setProgress(loaded, total);
+        }).then(() => {
+            // The match may have already ended (opponent disconnected, etc.) by the
+            // time preloading finishes - cleanupSocket() nulls `socket` in that case,
+            // so guard against emitting on a dead/replaced connection.
+            if (!socket) {
+                return;
+            }
+            // Done preloading on our end - the fight itself won't start until the
+            // server hears this from BOTH players (see "clientReadyForMatch" handling
+            // in server/networking/socketHandler.js), so let the person know we're
+            // now just waiting on the opponent rather than looking stuck at 100%.
+            loadingScreenUI.setWaitingForOpponent();
+            socket.emit("clientReadyForMatch");
+        });
+    });
+
+    //server has confirmed every player finished preloading (or the loading-timeout
+    //safety net forced it) - actual server-authoritative game state now exists and
+    //the tick loop has started, so it's safe to start rendering.
+    socket.on("matchBegin", ({ roomId, map, gameState }) => {
+        loadingScreenUI.hide();
+
+        setMap(map);
+
+        //play map music
+        if (map && map.id) {
+            console.log('[Socket] Playing map music:', map.id);
+            audioManager.stopMusic(true);
+            audioManager.playMapMusic(map.id);
         }
 
         //if matchmaking paired us with an AI opponent (see server/matchmaking/
         //matchMaking.js::createBotMatch), start the client-side bot FSM - this
         //is an internal flag only, never shown in the UI, so the opponent
         //looks like any other player.
-        if (opponent && opponent.isBot) {
+        const opponent = gameState.players.find(p => p.socketId !== socket.id);
+        if (pendingOpponentIsBot && opponent) {
             initBotForMatch(socket, opponent.socketId);
         } else {
             stopBot();
@@ -232,13 +270,22 @@ const initializeSocket = (mode, roomId) => {
         }
     });
 
-    socket.on("matchError", ({ errMsg }) => {
-        console.log("Match error: ", errMsg);
+    socket.on("matchError", ({ message, reason }) => {
+        console.log("Match error: ", message, reason);
         document.getElementById("character-select").style.display = "none";
-        cleanupSocket();
-        stopRender();
-        titleScreenUI.showTitleScreen();
+        loadingScreenUI.hide();
         battleUI.hide();
+
+        const displayMessage = message || "Match error - returning to menu";
+        const isDisconnect = reason === "opponent_disconnected";
+
+        showStatusBanner(displayMessage, { duration: 2200, variant: isDisconnect ? 'error' : 'info' });
+
+        setTimeout(() => {
+            cleanupSocket();
+            stopRender();
+            titleScreenUI.showTitleScreen();
+        }, 2200);
     });
 
     //send input to backend
@@ -345,6 +392,29 @@ const processInputs = () => {
     }
 };
 
+// Attached once at module load (not per-match) since #queuing is a static element
+// that persists for the whole page lifetime - re-binding this inside
+// initializeSocket() would stack up a duplicate listener on every quick-play/custom-room
+// attempt. Delegation also means it "just works" for the Cancel button regardless of
+// which of the two innerHTML templates above is currently showing.
+const queuingDiv = document.getElementById("queuing");
+if (queuingDiv) {
+    queuingDiv.addEventListener("click", (event) => {
+        if (event.target.id === "cancel-queue-btn") {
+            cancelMatchmaking();
+        }
+    });
+}
+
+const cancelMatchmaking = () => {
+    if (socket) {
+        socket.emit("cancelMatchmaking");
+    }
+    document.getElementById("queuing").classList.add("hidden");
+    cleanupSocket();
+    titleScreenUI.showTitleScreen();
+};
+
 //handle player disconnect after game ends
 const cleanupSocket = () => {
     if(inputInterval){
@@ -353,9 +423,12 @@ const cleanupSocket = () => {
     }
 
     stopBot();
+    hideStatusBanner();
+    loadingScreenUI.hide();
 
     inMatch = false;
     currentCharacterId = null;
+    pendingOpponentIsBot = false;
 
     //reset prediction state for the next match
     inputSequence = 0;
