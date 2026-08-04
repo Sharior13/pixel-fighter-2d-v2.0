@@ -5,7 +5,7 @@ import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimati
 import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
-import { SERVER_URL } from "./config.js";
+import { getServerUrl } from "./config.js";
 import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
 import { loadingScreenUI } from "../ui/loadingScreen.js";
 import { showStatusBanner, hideStatusBanner } from "../ui/statusBanner.js";
@@ -33,14 +33,28 @@ const pendingInputs = []; // inputs sent to the server but not yet confirmed (se
 // can't be silently superseded the way a stale "move: 0" can.
 const MAX_UNACKED_TICKS = 15; // ~250ms of backlog at 60Hz
 
-const initializeSocket = (mode, roomId) => {
+const initializeSocket = async (mode, roomId) => {
+    if (socket) {
+        return;
+    }
+
+    // Resolves instantly for local dev; for a deployed frontend this is the
+    // region whose /health check answered fastest (picked in the background
+    // back when config.js first loaded - see getServerUrl/pickFastestRegion
+    // in ./config.js), so this almost never actually waits here.
+    const serverUrl = await getServerUrl();
+
+    // cleanupSocket() (e.g. "Cancel" on the queuing screen) or a second call
+    // into startGame() could have run while we were awaiting the line above -
+    // re-check so we don't open a socket nobody wants anymore, or clobber one
+    // that's already open.
     if (socket) {
         return;
     }
 
     // Passing "" to io() connects to the same origin the page was loaded from.
-    // Passing SERVER_URL connects to a separately-deployed backend over WSS.
-    socket = io(SERVER_URL, { transports: ["websocket"], upgrade: false, timeout: 60000 });
+    // Passing serverUrl connects to a separately-deployed backend over WSS.
+    socket = io(serverUrl, { transports: ["websocket"], upgrade: false, timeout: 60000 });
 
     socket.on("disconnect", (reason) => console.log("[Socket] disconnected:", reason));
     socket.on("connect_error", (err) => console.log("[Socket] connect_error:", err.message));

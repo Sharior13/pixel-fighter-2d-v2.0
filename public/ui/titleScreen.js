@@ -120,6 +120,17 @@ class TitleScreenUI {
     
     startGame(mode, roomId) {
         this.hideTitleScreen();
+
+        // initializeSocket() now awaits region selection (see socket.js/config.js)
+        // before it actually opens the connection - on a cold page load that can
+        // take a moment, so show something here rather than a blank screen. Every
+        // path out of initializeSocket() (queueJoined, customRoomCreated,
+        // customRoomError, matchFound) overwrites #queuing's content anyway, so
+        // this is just a placeholder for that brief window.
+        const queuingDiv = document.getElementById("queuing");
+        queuingDiv.classList.remove("hidden");
+        queuingDiv.innerHTML = `<div style="text-align: center;"><p>Connecting...</p></div>`;
+
         initializeSocket(mode, roomId);
         initializeRender();
     }
