@@ -10,6 +10,15 @@ const socketHandler = (io)=>{
     initMatchmaking(io);
     io.on('connection', (socket)=>{
         debugLog("player connected");
+
+        //latency measurement: client emits this periodically with an ack callback
+        //and times how long the round trip takes (see startPingMonitor in
+        //public/core/socket.js) - all this needs to do is call back immediately.
+        socket.on("pingCheck", (callback) => {
+            if (typeof callback === "function") {
+                callback();
+            }
+        });
         
         //start match process when player presses quick play or custom room
         socket.on("findMatch", (mode, roomId, username)=>{

@@ -39,6 +39,11 @@
          wait for both players to confirm readiness (see public/ui/loadingScreen.js) -->
     <div id="loading-screen" class="hidden"></div>
 
+    <!-- small, low-opacity round-trip latency readout, bottom-right corner
+         (see public/ui/pingDisplay.js). Hidden by default - only shown while
+         matchmaking/in a match (see startPingMonitor/stopPingMonitor). -->
+    <div id="ping-display" class="hidden">--ms</div>
+
     <!-- character selection ui -->
 
     <div id="character-select" class="character-container hidden">
@@ -99,6 +104,11 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/rukia/rukia-icon.png" alt="Player 1" class="character-image">
         </div>
         <div class="character-name left">RUKIA</div>
+        <div class="dash-bar-wrapper left">
+            <div class="dash-bar-bg" id="dash-bg-p1">
+                <div class="dash-bar-fill" id="dash-p1"></div>
+            </div>
+        </div>
 
         <div class="bars-container left">
             <div class="health-bar-wrapper">
@@ -119,6 +129,11 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/naruto/naruto-icon.png" alt="Player 2" class="character-image">
         </div>
         <div class="character-name right">Naruto</div>
+        <div class="dash-bar-wrapper right">
+            <div class="dash-bar-bg" id="dash-bg-p2">
+                <div class="dash-bar-fill" id="dash-p2"></div>
+            </div>
+        </div>
 
         <div class="bars-container right">
             <div class="health-bar-wrapper">

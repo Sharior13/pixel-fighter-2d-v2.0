@@ -6,6 +6,7 @@ import { audioManager } from "../core/audioManager.js";
 import { ASSET_BASE_URL } from "../core/config.js";
 import "./touchControls.js";
 import { debugLog, debugWarn, debugError, notify } from "../core/debug.js";
+import { stopPingMonitor } from "./pingDisplay.js";
 
 class TitleScreenUI {
     constructor() {
@@ -144,7 +145,13 @@ class TitleScreenUI {
         canvas.style.backgroundImage = "url('../assets/background/title-bg.gif')";
         this.titleDiv.style.display = "flex";
         document.body.classList.remove('in-battle');
-        
+
+        // Safety net: whatever path got us back to the main menu (cancel queue,
+        // match error, or the normal "return to menu" button after a match ends),
+        // the ping readout should never still be showing here. stopPingMonitor()
+        // is a no-op if it was already stopped, so this is safe to call unconditionally.
+        stopPingMonitor();
+
         // Play title music
         audioManager.playTitleMusic();
         

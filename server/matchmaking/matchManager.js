@@ -132,7 +132,17 @@ const startCharacterSelectTimeout = (match, startOnTimeout, duration = GAME_CONF
         }
 
         // NEW: Assign random characters ensuring no duplicates
-        const usedCharacters = new Set();
+        // Seed with whatever's already been picked (locked in or just
+        // selected-but-not-locked) BEFORE assigning any randoms - otherwise
+        // a player who hasn't picked yet but is earlier in match.players
+        // could get randomly assigned the same character their opponent
+        // already locked in later in the array, since forEach below only
+        // adds a player's character to this set as it reaches them.
+        const usedCharacters = new Set(
+            currentMatch.players
+                .filter(p => p.character)
+                .map(p => p.character)
+        );
         
         currentMatch.players.forEach((p)=>{
             if(!p.character){
@@ -147,8 +157,8 @@ const startCharacterSelectTimeout = (match, startOnTimeout, duration = GAME_CONF
                 } while (usedCharacters.has(randomChar) && attempts < maxAttempts);
                 
                 p.character = randomChar;
+                usedCharacters.add(randomChar);
             }
-            usedCharacters.add(p.character);
             p.locked = true;
         });
 

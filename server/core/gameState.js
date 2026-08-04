@@ -159,6 +159,12 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 
                 //combat stats
                 combo: 0,
+                // highest combo count reached at any point this match - `combo`
+                // itself resets to 0 on a whiff/miss or a stretch of no input
+                // (see the reset near the top of gameTick), so it's usually 0
+                // again by the time the match actually ends; this is what the
+                // match-end screen's "Combo Count" stat should read from.
+                maxCombo: 0,
                 comboWindowEndFrame: 0,
                 damage: 0,
                 damageReceived: 0,
@@ -512,12 +518,20 @@ const gameTick = (roomId, io)=>{
             const p1 = gameState.players[0];
             const p2 = gameState.players[1];
 
+            // Compare remaining health as a PERCENTAGE of each character's own max
+            // health, not raw HP - characters have different maxHealth values (see
+            // server/data/characterData.js), so comparing raw numbers unfairly
+            // favored whoever picked the tankier character regardless of how much
+            // of their own health bar they actually had left.
+            const p1HealthPct = p1.maxHealth > 0 ? p1.health / p1.maxHealth : 0;
+            const p2HealthPct = p2.maxHealth > 0 ? p2.health / p2.maxHealth : 0;
+
             let winner;
-            if (p1.health > p2.health) {
+            if (p1HealthPct > p2HealthPct) {
                 winner = p1.socketId;
                 p1.state = 'victory';
                 p2.state = 'defeated';
-            } else if (p2.health > p1.health) {
+            } else if (p2HealthPct > p1HealthPct) {
                 winner = p2.socketId;
                 p2.state = 'victory';
                 p1.state = 'defeated';
@@ -739,6 +753,7 @@ const gameTick = (roomId, io)=>{
                     damage: p.damage,
                     damageReceived: p.damageReceived,
                     combo: p.combo,
+                    maxCombo: p.maxCombo || 0,
                     killCount: p.killCount
                 })),
                 reason: matchEndCheck.reason
@@ -804,9 +819,14 @@ const endMatch = (roomId, io, winner = null)=>{
     gameState.matchEndTime = Date.now();
     
     if(!winner){
-        winner = gameState.players.reduce((prev, current) => 
-            current.health > prev.health ? current : prev
-        );
+        // Same percentage-of-max-health comparison as the timeout branch in
+        // checkMatchEnd() above - see the comment there for why raw health
+        // isn't a fair comparison across characters with different maxHealth.
+        winner = gameState.players.reduce((prev, current) => {
+            const prevPct = prev.maxHealth > 0 ? prev.health / prev.maxHealth : 0;
+            const currentPct = current.maxHealth > 0 ? current.health / current.maxHealth : 0;
+            return currentPct > prevPct ? current : prev;
+        });
     }
     
     gameState.winner = winner.socketId;
@@ -822,6 +842,8 @@ const endMatch = (roomId, io, winner = null)=>{
             health: p.health,
             damage: p.damage,
             damageReceived: p.damageReceived,
+            combo: p.combo,
+            maxCombo: p.maxCombo || 0,
             killCount: p.killCount
         }))
     });

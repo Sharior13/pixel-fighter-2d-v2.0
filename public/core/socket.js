@@ -6,6 +6,7 @@ import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
 import { getServerUrl } from "./config.js";
+import { startPingMonitor, stopPingMonitor } from "../ui/pingDisplay.js";
 import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
 import { loadingScreenUI } from "../ui/loadingScreen.js";
 import { showStatusBanner, hideStatusBanner } from "../ui/statusBanner.js";
@@ -16,6 +17,13 @@ let socket = null;
 let inMatch = false;
 let inputInterval = null;
 let currentCharacterId = null;
+
+// live "how long have I been waiting" timer shown on the queuing/custom-room
+// screen (see startQueueTimer/stopQueueTimer below) - covers both quick-play
+// queueing and waiting for someone to join a custom room, since both use the
+// same #queuing element and both can take a while.
+let queueTimerInterval = null;
+let queueStartedAt = 0;
 
 // stashed from "matchLoading" (which carries isBot) so "matchBegin" - whose nested
 // gameState.players doesn't repeat that flag - still knows whether to spin up the
@@ -33,6 +41,37 @@ const pendingInputs = []; // inputs sent to the server but not yet confirmed (se
 // Meaningful actions (jump/dash/attack/block) are always sent regardless, since those
 // can't be silently superseded the way a stale "move: 0" can.
 const MAX_UNACKED_TICKS = 15; // ~250ms of backlog at 60Hz
+
+// mm:ss - queues are almost never long enough to need an hours place
+const formatElapsed = (ms) => {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
+const updateQueueTimerDisplay = () => {
+    const el = document.getElementById('queue-timer');
+    if (!el) return;
+    el.textContent = formatElapsed(Date.now() - queueStartedAt);
+};
+
+// Starts (or restarts) the elapsed-time readout. Safe to call multiple times -
+// always clears any previous loop first, same pattern as pingDisplay.js's
+// startPingMonitor.
+const startQueueTimer = () => {
+    stopQueueTimer();
+    queueStartedAt = Date.now();
+    updateQueueTimerDisplay(); // show 00:00 immediately, don't wait a full second
+    queueTimerInterval = setInterval(updateQueueTimerDisplay, 1000);
+};
+
+const stopQueueTimer = () => {
+    if (queueTimerInterval) {
+        clearInterval(queueTimerInterval);
+        queueTimerInterval = null;
+    }
+};
 
 const initializeSocket = async (mode, roomId) => {
     if (socket) {
@@ -56,6 +95,7 @@ const initializeSocket = async (mode, roomId) => {
     // Passing "" to io() connects to the same origin the page was loaded from.
     // Passing serverUrl connects to a separately-deployed backend over WSS.
     socket = io(serverUrl, { transports: ["websocket"], upgrade: false, timeout: 60000 });
+    startPingMonitor(socket);
 
     socket.on("disconnect", (reason) => debugLog("[Socket] disconnected:", reason));
     socket.on("connect_error", (err) => debugLog("[Socket] connect_error:", err.message));
@@ -82,9 +122,11 @@ const initializeSocket = async (mode, roomId) => {
         document.getElementById("queuing").innerHTML = `
             <div style="text-align: center;">
                 <p>Queue started!</p>
+                <p id="queue-timer" style="font-size: 20px; font-weight: bold; margin: 8px 0; color: #ccc;">00:00</p>
                 <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
             </div>
         `;
+        startQueueTimer();
     });
 
     socket.on("customRoomCreated", ({ roomId }) => {
@@ -95,14 +137,17 @@ const initializeSocket = async (mode, roomId) => {
                 <p>Custom Room Created!</p>
                 <p style="font-size: 24px; font-weight: bold; margin: 10px 0;">Room ID: ${roomId}</p>
                 <p style="font-size: 14px; color: #888;">Waiting for opponent to join...</p>
+                <p id="queue-timer" style="font-size: 20px; font-weight: bold; margin: 8px 0; color: #ccc;">00:00</p>
                 <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
             </div>
         `;
+        startQueueTimer();
     });
 
     socket.on("customRoomError", ({ message }) => {
         notify(message);
         document.getElementById("queuing").classList.add("hidden");
+        stopQueueTimer();
         cleanupSocket();
         stopRender();
         titleScreenUI.showTitleScreen();
@@ -111,6 +156,7 @@ const initializeSocket = async (mode, roomId) => {
     socket.on("matchFound", ({ roomId, playerIndex }) => {
         inMatch = true;
         debugLog("Match found!", roomId);
+        stopQueueTimer();
         document.getElementById("queuing").classList.add("hidden");
 
         showStatusBanner("Match Found!", { duration: 1100, variant: 'success' });
@@ -244,7 +290,8 @@ const initializeSocket = async (mode, roomId) => {
                 localPlayer,
                 opponent,
                 finalStats,
-                reason
+                reason,
+                isBot: pendingOpponentIsBot
             });
             
             //clean up character sounds
@@ -426,6 +473,7 @@ const cancelMatchmaking = () => {
         socket.emit("cancelMatchmaking");
     }
     document.getElementById("queuing").classList.add("hidden");
+    stopQueueTimer();
     cleanupSocket();
     titleScreenUI.showTitleScreen();
 };
@@ -440,6 +488,8 @@ const cleanupSocket = () => {
     stopBot();
     hideStatusBanner();
     loadingScreenUI.hide();
+    stopPingMonitor();
+    stopQueueTimer();
 
     inMatch = false;
     currentCharacterId = null;

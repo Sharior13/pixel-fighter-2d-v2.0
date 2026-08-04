@@ -8,6 +8,10 @@ class MatchEndScreen {
         this.screenElement = null;
         this.isWaitingForRematch = false;
         this.matchData = null;
+        this.isBot = false;
+        // see scheduleBotLeave() - simulates a bot "leaving" some random
+        // time after the results screen is already showing, never mid-match.
+        this.botLeaveTimeout = null;
         this.createScreenElement();
     }
 
@@ -77,7 +81,7 @@ class MatchEndScreen {
 
     show(matchData) {
         this.matchData = matchData;
-        const { winner, localPlayer, opponent, reason } = matchData;
+        const { winner, localPlayer, opponent, reason, isBot } = matchData;
 
         debugLog('[MatchEndScreen] Showing results');
         debugLog('[MatchEndScreen] Winner:', winner);
@@ -124,6 +128,74 @@ class MatchEndScreen {
 
         // Show the screen
         this.screenElement.classList.add('show');
+
+        // Bot opponents have no real connection to drop (see botController.js -
+        // it's just a client-side input generator, the server never sees an
+        // actual "bot player" socket) so there's nothing to disconnect DURING
+        // the fight. Instead, once results are already up, simulate the bot
+        // player closing the tab/app shortly after seeing the outcome - same
+        // as a human opponent might - purely for realism. Real disconnect
+        // reasons (reason === 'opponent_disconnected', handled above) always
+        // take priority and this is skipped in that case via the opponentLeft
+        // check inside scheduleBotLeave().
+        this.isBot = !!isBot;
+        this.scheduleBotLeave();
+    }
+
+    // Random 1-10s after the results screen is shown, simulate the bot
+    // opponent leaving (only for bot matches, and only if the match didn't
+    // already end in a real disconnect). Cancelled automatically whenever
+    // the screen is hidden (rematch accepted or returning to menu) - see hide().
+    scheduleBotLeave() {
+        this.clearBotLeaveTimeout();
+
+        if (!this.isBot || this.opponentLeft) {
+            return;
+        }
+
+        const delay = 1000 + Math.random() * 9000; // 1-10s, per requirements
+        this.botLeaveTimeout = setTimeout(() => {
+            this.botLeaveTimeout = null;
+            this.simulateOpponentLeft();
+        }, delay);
+    }
+
+    clearBotLeaveTimeout() {
+        if (this.botLeaveTimeout) {
+            clearTimeout(this.botLeaveTimeout);
+            this.botLeaveTimeout = null;
+        }
+    }
+
+    // Applies the same "opponent's gone" UI treatment show() uses for a real
+    // reason === 'opponent_disconnected' match end, but triggered client-side
+    // on a delay instead of at show()-time - see scheduleBotLeave().
+    simulateOpponentLeft() {
+        // Screen already dismissed (player left first, or a rematch already
+        // kicked off) - nothing to update.
+        if (!this.screenElement.classList.contains('show') || this.opponentLeft) {
+            return;
+        }
+
+        this.opponentLeft = true;
+
+        const resultSubtext = this.screenElement.querySelector('.result-subtext');
+        if (resultSubtext) {
+            resultSubtext.textContent = 'Opponent disconnected';
+        }
+
+        const rematchBtn = document.getElementById('rematch-btn');
+        if (rematchBtn) {
+            rematchBtn.disabled = true;
+            rematchBtn.textContent = 'Opponent Left';
+        }
+
+        // If we'd already requested a rematch and were sitting in "Waiting for
+        // opponent...", this is exactly the "they left before accepting" case -
+        // reuse the same decline handling a real opponent leaving would trigger.
+        if (this.isWaitingForRematch) {
+            this.handleRematchDeclined();
+        }
     }
 
     updatePlayerStats(selector, playerData, isWinner) {
@@ -214,6 +286,8 @@ class MatchEndScreen {
     hide() {
         this.screenElement.classList.remove('show');
         this.isWaitingForRematch = false;
+        this.isBot = false;
+        this.clearBotLeaveTimeout();
 
         // Reset classes
         const resultText = this.screenElement.querySelector('.result-text');

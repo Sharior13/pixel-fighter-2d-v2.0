@@ -289,8 +289,12 @@ const createBotMatch = (socket) => {
 
     // a minimal stand-in for a real socket.io socket - only needs an `id`
     // (used everywhere as the player identity key) and a no-op `join`
-    // (matchManager/createMatch calls player.join(roomId) on every player)
-    const botSocket = { id: botId, isBot: true, join: () => {} };
+    // (matchManager/createMatch calls player.join(roomId) on every player).
+    // `username` matters too - matchManager's enterLoadingPhase() resolves
+    // each player's display name from `p.socket.username`, and without it
+    // set here the bot always fell back to the generic "Player" default,
+    // even though botUsername below was already being picked correctly.
+    const botSocket = { id: botId, isBot: true, username: botUsername, join: () => {} };
 
     const match = createMatch(roomId, [socket, botSocket]);
 

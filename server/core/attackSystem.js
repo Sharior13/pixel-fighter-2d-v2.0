@@ -591,6 +591,7 @@ class AttackHandler {
         // otherwise this hit starts a fresh combo at count 1.
         const isComboContinuation = attacker.comboWindowEndFrame && currentFrame <= attacker.comboWindowEndFrame;
         attacker.combo = isComboContinuation ? attacker.combo + 1 : 1;
+        attacker.maxCombo = Math.max(attacker.maxCombo || 0, attacker.combo);
         attacker.comboWindowEndFrame = currentFrame + COMBO_WINDOW_FRAMES;
 
         const comboMultiplier = getComboDamageMultiplier(attacker.combo);
