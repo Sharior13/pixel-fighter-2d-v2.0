@@ -1,5 +1,5 @@
 const { STATES, setCombatState, canAttack, triggerHitstop, isFrozen } = require('./stateMachine.js');
-const { debugLog } = require("./debug.js");
+const hitboxSystem = require('./hitboxSystem.js');
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
@@ -397,7 +397,7 @@ class AttackHandler {
 
         this.activeAttacks.set(attackId, attackData);
 
-        debugLog(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
+        console.log(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
 
         return {
             success: true,
@@ -453,7 +453,7 @@ class AttackHandler {
         // can't cancel into a move that's on cooldown.
         setCombatState(attacker, STATES.IDLE, gameState.tickCount);
 
-        debugLog(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
+        console.log(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
         return this.initiateAttack(gameState, attacker, requestedMove);
     }
 
@@ -522,7 +522,7 @@ class AttackHandler {
                     attacker.comboWindowEndFrame = 0;
                 }
 
-                debugLog(`[AttackHandler] Attack ${attackId} completed`);
+                console.log(`[AttackHandler] Attack ${attackId} completed`);
             }
         }
 
@@ -557,13 +557,6 @@ class AttackHandler {
             // Skip self and dead players
             if (target.socketId === attacker.socketId || target.isDead) continue;
 
-            // Calculate distance between players
-            const distanceX = Math.abs(attacker.position.x - target.position.x);
-            const distanceY = Math.abs(attacker.position.y - target.position.y);
-
-            // Check if target is in front of attacker
-            const inFrontOfAttacker = (target.position.x - attacker.position.x) * attacker.facing > 0;
-
             // Use attack-specific range and hitbox
             const attackRange = config.range || 50; // Use attack's range
             const attackHitboxWidth = config.hitboxWidth || 40;
@@ -573,11 +566,28 @@ class AttackHandler {
             const horizontalRange = (attacker.size.width / 2) + (target.size.width / 2) + attackRange;
             const verticalRange = Math.max(attackHitboxHeight, target.size.height);
 
-            // Check if target is within attack range and hitbox
-            if (inFrontOfAttacker && distanceX <= horizontalRange && distanceY <= verticalRange / 2) {
+            // Hurtbox interpolation (build-order item 4 / spec section 4):
+            // sample the target along its path this tick (previousPosition
+            // -> current position), not just where it landed, so a target
+            // moving fast enough in one tick - chiefly the knockback/corner
+            // -pushback this same item adds, but also dashes - can't skip
+            // clean through an active hitbox it only briefly passed through
+            // mid-tick. The t=1 sample is exactly the old static check, so
+            // this is additive, not a behavior change for the normal case.
+            const previousPosition = target.previousPosition || target.position;
+            const samples = hitboxSystem.interpolateHurtbox(target, previousPosition, target.position);
+
+            const hit = samples.some(sample => {
+                const distanceX = Math.abs(attacker.position.x - sample.x);
+                const distanceY = Math.abs(attacker.position.y - sample.y);
+                const inFrontOfAttacker = (sample.x - attacker.position.x) * attacker.facing > 0;
+                return inFrontOfAttacker && distanceX <= horizontalRange && distanceY <= verticalRange / 2;
+            });
+
+            if (hit) {
                 this.applyHit(gameState, attacker, target, attackData);
                 attackData.hasHit = true; // Mark as hit (single hit only)
-                debugLog(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
+                console.log(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
                 break; // Only hit one target
             }
         }
@@ -591,7 +601,6 @@ class AttackHandler {
         // otherwise this hit starts a fresh combo at count 1.
         const isComboContinuation = attacker.comboWindowEndFrame && currentFrame <= attacker.comboWindowEndFrame;
         attacker.combo = isComboContinuation ? attacker.combo + 1 : 1;
-        attacker.maxCombo = Math.max(attacker.maxCombo || 0, attacker.combo);
         attacker.comboWindowEndFrame = currentFrame + COMBO_WINDOW_FRAMES;
 
         const comboMultiplier = getComboDamageMultiplier(attacker.combo);
@@ -610,15 +619,17 @@ class AttackHandler {
         triggerHitstop(attacker, HITSTOP_DURATION_FRAMES);
         triggerHitstop(target, HITSTOP_DURATION_FRAMES);
 
-        // Apply knockback (reduced if blocking)
+        // Apply knockback (reduced if blocking) - build-order item 4:
+        // resolved through hitboxSystem.applyCornerPushback rather than a
+        // flat velocity assignment, so a defender pinned against the wall
+        // redirects the force onto the attacker instead of just stopping
+        // dead (see hitboxSystem.js for the split/redirect logic).
         if (!target.isBlocking) {
             const knockbackDir = target.position.x > attacker.position.x ? 1 : -1;
-            target.velocity.x = config.knockback.x * knockbackDir;
-
-            if (config.knockback.y > 0) {
-                target.velocity.y = -Math.abs(config.knockback.y);
-                target.isGrounded = false;
-            }
+            hitboxSystem.applyCornerPushback(attacker, target, {
+                x: config.knockback.x * knockbackDir,
+                y: config.knockback.y
+            });
 
             // Apply hitstun, shortened as the combo goes on so long chains eventually let the victim escape
             setCombatState(target, STATES.HITSTUN, currentFrame);
@@ -641,7 +652,7 @@ class AttackHandler {
         // Update attacker stats
         attacker.damage += damage;
 
-        debugLog(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
+        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
     }
 
     clear() {

@@ -2,7 +2,7 @@ const { getCharacterData } = require('../data/characterData.js');
 const { getMapData } = require('../data/maps.js');
 const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
-const { debugLog, debugWarn, debugError } = require("./debug.js");
+const hitboxSystem = require('./hitboxSystem.js');
 const { STATES } = stateMachine;
 
 const gameStates = new Map();
@@ -43,13 +43,13 @@ const GAME_CONFIG = {
 //initialize game state when match starts
 const initializeGameState = (roomId, playerData, mapId)=>{
     if(gameStates.has(roomId)){
-        debugWarn(`[GameState] Game state already exists for room ${roomId}`);
+        console.warn(`[GameState] Game state already exists for room ${roomId}`);
         return gameStates.get(roomId);
     }
 
     //load map
     const mapData = getMapData(mapId);
-    debugLog(`[GameState] Initializing game with map: ${mapData.name}`);
+    console.log(`[GameState] Initializing game with map: ${mapData.name}`);
 
     const gameState = {
         roomId,
@@ -73,7 +73,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
             const charData = getCharacterData(p.character);
             
             if(!charData){
-                debugError(`[GameState] Invalid character: ${p.character}`);
+                console.error(`[GameState] Invalid character: ${p.character}`);
                 throw new Error(`Invalid character: ${p.character}`);
             }
 
@@ -98,6 +98,21 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                     x: spawnPoint.x,
                     y: spawnPoint.y
                 },
+                //── hurtbox interpolation (build-order item 4) ──
+                //snapshot of position at the START of the current tick,
+                //refreshed every tick before movement is resolved - lets
+                //checkHit/applyKnockbackMovement sweep between where a
+                //player was and where they end up this tick, instead of
+                //only checking the final position. See hitboxSystem.js.
+                previousPosition: {
+                    x: spawnPoint.x,
+                    y: spawnPoint.y
+                },
+                //── corner pushback (build-order item 4) ──
+                //refreshed every tick from hitboxSystem.isAtScreenWall();
+                //read by hitboxSystem.applyCornerPushback to decide whether
+                //a landed hit's knockback redirects onto the attacker.
+                isAtWall: { left: false, right: false },
                 velocity: {
                     x: 0,
                     y: 0
@@ -159,12 +174,6 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 
                 //combat stats
                 combo: 0,
-                // highest combo count reached at any point this match - `combo`
-                // itself resets to 0 on a whiff/miss or a stretch of no input
-                // (see the reset near the top of gameTick), so it's usually 0
-                // again by the time the match actually ends; this is what the
-                // match-end screen's "Combo Count" stat should read from.
-                maxCombo: 0,
                 comboWindowEndFrame: 0,
                 damage: 0,
                 damageReceived: 0,
@@ -203,7 +212,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
     gameState.attackHandler = new AttackHandler();
 
     gameStates.set(roomId, gameState);
-    debugLog(`[GameState] Initialized game state for room ${roomId}`);
+    console.log(`[GameState] Initialized game state for room ${roomId}`);
     
     return gameState;
 };
@@ -268,7 +277,21 @@ const processInput = (roomId, socketId, input)=>{
 //apply to player movement
 const applyMovement = (player, players, direction, deltaTime, mapBoundaries)=>{
     if(!stateMachine.canMove(player.combatState)){
-        player.velocity.x = 0; // Clear horizontal velocity while attacking/stunned/locked
+        // NOTE: deliberately NOT zeroing velocity.x here anymore (build-order
+        // item 4). This guard runs on EVERY tick for EVERY player, because
+        // the client (public/core/socket.js processInputs()) sends a
+        // {type:'move', direction} input unconditionally every tick, direction:0
+        // included - so moveInputs is essentially never empty, and this
+        // branch is reached every single tick a player is locked/stunned.
+        // Hit resolution (attackHandler.updateAttacks) runs once at the top
+        // of gameTick, BEFORE the per-player loop this is called from - so
+        // by the time this guard runs on the same tick a hit landed, any
+        // knockback/recoil velocity is already sitting on the player, and
+        // blindly zeroing it here discarded it before applyKnockbackMovement
+        // (below, in the per-player loop) ever got a chance to integrate it
+        // into position. applyKnockbackMovement now owns decaying velocity.x
+        // to zero on its own (see KNOCKBACK_STOP_THRESHOLD) once it's actually
+        // been used, so this guard only needs to skip input-driven walking.
         return;
     }
     
@@ -368,6 +391,45 @@ const applyGravity = (player, deltaTime, groundY)=>{
     }
 };
 
+// ── Knockback movement integration (build-order item 4) ───────────────
+// applyHit -> hitboxSystem.applyCornerPushback only set velocity.x/y on a
+// landed hit - turning that into actual displacement, with friction decay
+// and wall safety, happens here every tick for whichever player isn't
+// already having velocity.x driven by applyMovement's input-driven walking
+// this tick (hitstun, or attacker recoil while locked in an attack state).
+// Without this step the knockback/corner-pushback work above would set
+// velocity that never moved anyone.
+//
+// NOTE: this intentionally does NOT resolve player-vs-player pushbox
+// overlap the way applyMovement's walking collision does - general pushbox
+// squeezing is its own build-order item (9 / spec section 9), not this one.
+// The wall clamp below is what item 4's corner-pushback actually needs:
+// once a knocked-back player reaches the stage boundary, the slide stops
+// there, same boundary hitboxSystem.isAtScreenWall checks against.
+const KNOCKBACK_FRICTION = 0.85; // per-tick decay so a knockback slides to a stop instead of forever
+const KNOCKBACK_STOP_THRESHOLD = 0.5;
+
+const applyKnockbackMovement = (player, mapBoundaries) => {
+    if (Math.abs(player.velocity.x) < KNOCKBACK_STOP_THRESHOLD) {
+        player.velocity.x = 0;
+        return;
+    }
+
+    const leftBound = mapBoundaries.left + player.size.width / 2;
+    const rightBound = mapBoundaries.right - player.size.width / 2;
+    const nextX = Math.max(leftBound, Math.min(rightBound, player.position.x + player.velocity.x));
+
+    player.position.x = nextX;
+
+    // Hitting the wall kills the remaining slide; otherwise the knockback
+    // decays each tick instead of running forever.
+    if (nextX <= leftBound || nextX >= rightBound) {
+        player.velocity.x = 0;
+    } else {
+        player.velocity.x *= KNOCKBACK_FRICTION;
+    }
+};
+
 const applyDash = (player, currentFrame) => {
     // Can't dash if already dashing, attacking, stunned/locked, or on cooldown
     if(!stateMachine.canDash(player.combatState) ||
@@ -380,7 +442,7 @@ const applyDash = (player, currentFrame) => {
     player.dashTimer = GAME_CONFIG.dash.durationFrames;
     player.dashCooldownTimer = GAME_CONFIG.dash.cooldownFrames;
     
-    debugLog(`[GameState] Player ${player.socketId} dashed!`);
+    console.log(`[GameState] Player ${player.socketId} dashed!`);
 
     return { success: true };
 };
@@ -390,13 +452,13 @@ const applyBlock = (player, activate) => {
         if(!player.isBlocking && stateMachine.canStartBlock(player.combatState)){
             player.isBlocking = true;
             player.blockActivatedFrame = player.combatStateEnteredFrame; // approximate, block isn't a combatState itself
-            debugLog(`[GameState] Player ${player.socketId} started blocking`);
+            console.log(`[GameState] Player ${player.socketId} started blocking`);
         }
     } 
     else {
         if(player.isBlocking){
             player.isBlocking = false;
-            debugLog(`[GameState] Player ${player.socketId} stopped blocking`);
+            console.log(`[GameState] Player ${player.socketId} stopped blocking`);
         }
     }
 };
@@ -478,9 +540,9 @@ const consumeOldestValidInput = (gameState, player, currentFrame) => {
             const result = gameState.attackHandler.initiateAttack(gameState, player, input.ability);
             const bufferedFor = currentFrame - bufferedFrame;
             if (result.success) {
-                debugLog(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
+                console.log(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
             } else {
-                debugLog(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
+                console.log(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
             }
             break;
         }
@@ -518,20 +580,12 @@ const gameTick = (roomId, io)=>{
             const p1 = gameState.players[0];
             const p2 = gameState.players[1];
 
-            // Compare remaining health as a PERCENTAGE of each character's own max
-            // health, not raw HP - characters have different maxHealth values (see
-            // server/data/characterData.js), so comparing raw numbers unfairly
-            // favored whoever picked the tankier character regardless of how much
-            // of their own health bar they actually had left.
-            const p1HealthPct = p1.maxHealth > 0 ? p1.health / p1.maxHealth : 0;
-            const p2HealthPct = p2.maxHealth > 0 ? p2.health / p2.maxHealth : 0;
-
             let winner;
-            if (p1HealthPct > p2HealthPct) {
+            if (p1.health > p2.health) {
                 winner = p1.socketId;
                 p1.state = 'victory';
                 p2.state = 'defeated';
-            } else if (p2HealthPct > p1HealthPct) {
+            } else if (p2.health > p1.health) {
                 winner = p2.socketId;
                 p2.state = 'victory';
                 p1.state = 'defeated';
@@ -574,6 +628,13 @@ const gameTick = (roomId, io)=>{
             return;
         }
 
+        // Snapshot start-of-tick position/wall-contact (build-order item 4)
+        // before anything below moves this player - interpolateHurtbox
+        // sweeps use previousPosition -> position, and applyCornerPushback
+        // reads isAtWall, so both need to reflect where this tick started.
+        player.previousPosition = { x: player.position.x, y: player.position.y };
+        player.isAtWall = hitboxSystem.isAtScreenWall(player, gameState.map.boundaries);
+
         // hitstop: freeze this player entirely for a few frames - no
         // cooldowns, no stun/dash timers, no input processing, no physics.
         // Everything below this point is exactly the stuff the spec says
@@ -591,7 +652,7 @@ const gameTick = (roomId, io)=>{
             stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
             player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
-            debugLog(`[GameState] ${player.socketId} stun ended`);
+            console.log(`[GameState] ${player.socketId} stun ended`);
         }
 
         if(player.dashTimer > 0){
@@ -651,11 +712,14 @@ const gameTick = (roomId, io)=>{
                 applyMovement(player, gameState.players, moveInput.direction, null, gameState.map.boundaries);
             });
             player.currentDirection = moveInputs[moveInputs.length - 1].direction;
-        } else {
-            if (player.isStunned && !player.isAttacking) {
-                player.velocity.x = 0;
-            }
         }
+        // else: no move input this tick. Previously this branch force-zeroed
+        // velocity.x whenever the player was stunned, which silently ate any
+        // knockback velocity a hit had just set before it ever displaced
+        // anyone - build-order item 4 needs that velocity to survive so
+        // applyKnockbackMovement (below, after this tick's attack resolves)
+        // can actually turn it into movement. Nothing to do here now; the
+        // knockback-movement pass replaces this.
 
         //process all other inputs - jump/attack/dash are committed actions
         //gated by combat-state legality, so they go through the input
@@ -679,7 +743,29 @@ const gameTick = (roomId, io)=>{
 
         pruneInputBuffer(player, currentFrame);
         consumeOldestValidInput(gameState, player, currentFrame);
-        
+
+        // Knockback movement (build-order item 4): turns whatever velocity.x
+        // applyCornerPushback set on this player during the attack resolution
+        // just above (hit reaction, or attacker recoil) into actual
+        // displacement, with wall safety and friction decay.
+        //
+        // Gate is stateMachine.canMove(), NOT moveInputs.length - the client
+        // (public/core/socket.js processInputs()) sends a {type:'move',
+        // direction} input EVERY tick unconditionally, direction:0 included,
+        // so moveInputs is essentially never empty for a connected player.
+        // Gating on that meant this never ran in a real match (it only
+        // looked right in isolated testing where no move inputs were ever
+        // sent at all) - knockback velocity got set on hit and then
+        // immediately zeroed by applyMovement's own "can't move while
+        // locked" guard above, without ever displacing anyone. canMove()
+        // correctly identifies "applyMovement just zeroed velocity.x and
+        // bailed without moving position" (hitstun, attack lock) versus
+        // "applyMovement legitimately owns velocity.x this tick" (free to
+        // walk) - only the former should fall through to here.
+        if (!stateMachine.canMove(player.combatState)) {
+            applyKnockbackMovement(player, gameState.map.boundaries);
+        }
+
         applyGravity(player, null, gameState.map.groundY);
 
         //classify idle/walking/jumping/airborne now that this tick's physics
@@ -753,13 +839,12 @@ const gameTick = (roomId, io)=>{
                     damage: p.damage,
                     damageReceived: p.damageReceived,
                     combo: p.combo,
-                    maxCombo: p.maxCombo || 0,
                     killCount: p.killCount
                 })),
                 reason: matchEndCheck.reason
             });
             
-            debugLog(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
+            console.log(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
             
             // Don't delete game state immediately - keep for rematch
             // gameStates.delete(roomId);
@@ -785,11 +870,11 @@ const gameTick = (roomId, io)=>{
 //main server side game loop
 const startGameLoop = (roomId, io)=>{
     if(gameLoopIntervals.has(roomId)){
-        debugWarn(`[GameState] Game loop already running for room ${roomId}`);
+        console.warn(`[GameState] Game loop already running for room ${roomId}`);
         return;
     }
     
-    debugLog(`[GameState] Starting game loop for room ${roomId}`);
+    console.log(`[GameState] Starting game loop for room ${roomId}`);
     
     const intervalId = setInterval(()=>{
         gameTick(roomId, io);
@@ -803,7 +888,7 @@ const stopGameLoop = (roomId)=>{
     if(gameLoopIntervals.has(roomId)){
         clearInterval(gameLoopIntervals.get(roomId));
         gameLoopIntervals.delete(roomId);
-        debugLog(`[GameState] Stopped game loop for room ${roomId}`);
+        console.log(`[GameState] Stopped game loop for room ${roomId}`);
     }
 };
 
@@ -819,14 +904,9 @@ const endMatch = (roomId, io, winner = null)=>{
     gameState.matchEndTime = Date.now();
     
     if(!winner){
-        // Same percentage-of-max-health comparison as the timeout branch in
-        // checkMatchEnd() above - see the comment there for why raw health
-        // isn't a fair comparison across characters with different maxHealth.
-        winner = gameState.players.reduce((prev, current) => {
-            const prevPct = prev.maxHealth > 0 ? prev.health / prev.maxHealth : 0;
-            const currentPct = current.maxHealth > 0 ? current.health / current.maxHealth : 0;
-            return currentPct > prevPct ? current : prev;
-        });
+        winner = gameState.players.reduce((prev, current) => 
+            current.health > prev.health ? current : prev
+        );
     }
     
     gameState.winner = winner.socketId;
@@ -842,13 +922,11 @@ const endMatch = (roomId, io, winner = null)=>{
             health: p.health,
             damage: p.damage,
             damageReceived: p.damageReceived,
-            combo: p.combo,
-            maxCombo: p.maxCombo || 0,
             killCount: p.killCount
         }))
     });
     
-    debugLog(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
+    console.log(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
     
     setTimeout(()=>{
         deleteGameState(roomId);
@@ -918,7 +996,7 @@ const getClientGameState = (gameState)=>{
 const deleteGameState = (roomId)=>{
     stopGameLoop(roomId);
     gameStates.delete(roomId);
-    debugLog(`[GameState] Deleted game state for room ${roomId}`);
+    console.log(`[GameState] Deleted game state for room ${roomId}`);
 };
 
 module.exports = { GAME_CONFIG, initializeGameState, getGameState, processInput, startGameLoop, stopGameLoop, endMatch, deleteGameState, getClientGameState };
