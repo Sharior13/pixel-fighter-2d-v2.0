@@ -335,6 +335,19 @@
         <p>Rotate your device to landscape<br>for the best experience</p>
     </div>
 
+    <!-- One-time-per-session full screen prompt (see core/fullscreenGate.js).
+         Desktop/laptop: dismissible via the X, plus a button to go full screen.
+         Mobile/tablet: mandatory (no X) - reuses the same dark overlay + rotate
+         icon treatment as #rotate-overlay above, and also requires landscape
+         orientation before it will let the player continue. -->
+    <div id="fullscreen-gate">
+        <button class="fullscreen-gate-close" id="fullscreen-gate-close" aria-label="Close">&times;</button>
+        <div class="rotate-icon hidden" id="fullscreen-gate-rotate-icon">⟳</div>
+        <p id="fullscreen-gate-message">For the best experience, play in full screen.</p>
+        <p id="fullscreen-gate-rotate-message" class="hidden">Please also rotate your device to landscape.</p>
+        <button class="btn btn-small" id="fullscreen-gate-btn">Enter Full Screen</button>
+    </div>
+
     <!-- on-screen touch controls (shown automatically on touch devices) -->
     <div id="touch-controls" class="hidden">
         <div class="touch-dpad" id="touch-dpad">

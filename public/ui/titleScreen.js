@@ -7,6 +7,7 @@ import { ASSET_BASE_URL } from "../core/config.js";
 import "./touchControls.js";
 import { debugLog, debugWarn, debugError, notify } from "../core/debug.js";
 import { stopPingMonitor } from "./pingDisplay.js";
+import { initFullscreenGate } from "../core/fullscreenGate.js";
 
 class TitleScreenUI {
     constructor() {
@@ -40,6 +41,12 @@ class TitleScreenUI {
         this.setupSettingsScreen();
         this.setupProfileScreen();
         this.showTitleScreen();
+
+        // Once-per-session full screen prompt - see core/fullscreenGate.js.
+        // Runs after showTitleScreen() so it visually sits on top of it
+        // (it's a fixed-position overlay either way, but this keeps the
+        // ordering sensible if that ever changes).
+        initFullscreenGate();
         
         // Play title music
         audioManager.playTitleMusic();
