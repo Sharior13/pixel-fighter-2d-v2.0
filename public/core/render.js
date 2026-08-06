@@ -24,9 +24,12 @@ canvas.height = window.innerHeight;
 window.addEventListener('resize', ()=>{
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    bgImg.style.width = currentMap.width + 'px';
-    bgImg.style.height = currentMap.height + 'px';
-    if(bgImg){
+    // bgImg/currentMap are only set once a match actually loads a map - on first
+    // page load (or any time we're sitting at a menu with no map loaded), a
+    // browser-fired resize event would otherwise throw here.
+    if(bgImg && currentMap){
+        bgImg.style.width = currentMap.width + 'px';
+        bgImg.style.height = currentMap.height + 'px';
     }
 });
 

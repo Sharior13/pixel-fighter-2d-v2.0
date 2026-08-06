@@ -138,7 +138,12 @@ class TitleScreenUI {
         // this is just a placeholder for that brief window.
         const queuingDiv = document.getElementById("queuing");
         queuingDiv.classList.remove("hidden");
-        queuingDiv.innerHTML = `<div style="text-align: center;"><p>Connecting...</p></div>`;
+        queuingDiv.innerHTML = `
+            <div style="text-align: center;">
+                <p>Connecting...</p>
+                <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
+            </div>
+        `;
 
         initializeSocket(mode, roomId);
         initializeRender();
@@ -416,4 +421,4 @@ export const getPlayerUsername = () => {
     return titleScreenUI.getUsername();
 };
 
-export { titleScreenUI };
+export { titleScreenUI };   

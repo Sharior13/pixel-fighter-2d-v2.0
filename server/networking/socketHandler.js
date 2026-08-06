@@ -233,7 +233,15 @@ const socketHandler = (io)=>{
                 //end the game if a player disconnects during fight
                 const gameState = getGameState(match.roomId);
 
-                if(gameState){
+                // match.phase (matchManager) doesn't get updated when the fight ends
+                // naturally (KO/timeout) - gameState.js deliberately keeps gameState
+                // around after that with gameState.phase flipped to "ENDED", so a
+                // rematch can reuse it. Without checking gameState.phase here too, a
+                // player disconnecting AFTER the match already concluded (e.g. the
+                // winner clicking "Main Menu" without requesting a rematch) looks
+                // identical to a genuine mid-fight disconnect, and this would emit a
+                // bogus forfeit "matchEnd" crowning the loser winner over the real result.
+                if(gameState && gameState.phase === "FIGHT"){
                     const remainingPlayer = gameState.players.find(p => p.socketId !== socket.id);
                     if(remainingPlayer){
                         io.to(match.roomId).emit("matchEnd", {

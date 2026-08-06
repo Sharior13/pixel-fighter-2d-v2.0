@@ -176,7 +176,7 @@
                 
                     <div class="row">
                         <span>Room Id</span>
-                        <input placeholder="Join" class="inp" required>
+                        <input id="room-id-input" name="roomId" placeholder="Join" class="inp" required>
                     </div><br>
                 
                     <button class="btn" id="room-join-btn">Join</button>
@@ -187,7 +187,7 @@
                 
                     <div class="row">
                         <span>Room Name</span>
-                        <input placeholder="Enter Name" class="inp">
+                        <input id="room-name-input" name="roomName" placeholder="Enter Name" class="inp">
                     </div><br>
                 
                     <button class="btn" id="room-create-btn">Create</button>
@@ -310,11 +310,12 @@
             <!-- Profile Info -->
             <div class="profile-info">
 
-                <input class="username username-input"
+                <input id="username-input" name="username" class="username username-input"
                     type="text" 
                     placeholder="Enter username"
                     value="Player"
                     maxlength="12"
+                    autocomplete="username"
                 >
 
             </div>

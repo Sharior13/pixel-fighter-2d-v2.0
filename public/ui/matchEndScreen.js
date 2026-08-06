@@ -80,6 +80,20 @@ class MatchEndScreen {
     }
 
     show(matchData) {
+        // A real (non-bot) opponent disconnecting right after the match already ended -
+        // e.g. clicking "Main Menu" without requesting a rematch - can make the server
+        // send a SECOND "matchEnd" here, treating that disconnect as a forfeit without
+        // realizing the match was already decided. If we're already displaying a result
+        // for this match, don't let that second event re-derive victory/defeat and
+        // stomp the real outcome (this is what was flipping a real DEFEAT into a
+        // VICTORY). Just treat it like any other "opponent left the results screen"
+        // case instead - same handling the bot-leave path already uses.
+        if (this.screenElement.classList.contains('show')) {
+            debugLog('[MatchEndScreen] Ignoring duplicate matchEnd while a result is already showing - treating as opponent leaving');
+            this.simulateOpponentLeft();
+            return;
+        }
+
         this.matchData = matchData;
         const { winner, localPlayer, opponent, reason, isBot } = matchData;
 
@@ -169,7 +183,10 @@ class MatchEndScreen {
 
     // Applies the same "opponent's gone" UI treatment show() uses for a real
     // reason === 'opponent_disconnected' match end, but triggered client-side
-    // on a delay instead of at show()-time - see scheduleBotLeave().
+    // instead of at show()-time. Two callers: scheduleBotLeave() (bot opponents,
+    // on a random delay) and show() itself (a real opponent's post-match
+    // disconnect arriving as a stray second matchEnd - see the guard at the
+    // top of show()).
     simulateOpponentLeft() {
         // Screen already dismissed (player left first, or a rematch already
         // kicked off) - nothing to update.

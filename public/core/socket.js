@@ -30,6 +30,13 @@ let queueStartedAt = 0;
 // client-side bot FSM.
 let pendingOpponentIsBot = false;
 
+// How long we'll wait - counting from the moment startGame() calls initializeSocket()
+// all the way through region resolution (getServerUrl) AND the socket.io handshake
+// itself - before giving up and telling the player we couldn't reach the server. See
+// showConnectionFailed()/clearConnectionTimeout() below.
+const CONNECTION_TIMEOUT_MS = 10000;
+let connectionTimeoutId = null;
+
 // client-side prediction bookkeeping
 let inputSequence = 0;
 let currentTick = 0; // increments once per processInputs() call, groups same-tick inputs
@@ -73,10 +80,41 @@ const stopQueueTimer = () => {
     }
 };
 
+const clearConnectionTimeout = () => {
+    if (connectionTimeoutId) {
+        clearTimeout(connectionTimeoutId);
+        connectionTimeoutId = null;
+    }
+};
+
+// Fires if CONNECTION_TIMEOUT_MS passes without a successful socket.io "connect" -
+// whether we were stuck resolving the fastest region or stuck in the handshake itself.
+// Tears down whatever was in flight (same as the Cancel button does) so a socket that
+// happens to connect late can't silently carry on after the player's already been told
+// it failed, then leaves the player on a dismissible message rather than a permanent
+// "Connecting..." with no way out.
+const showConnectionFailed = () => {
+    connectionTimeoutId = null;
+    cleanupSocket();
+
+    const queuingDiv = document.getElementById("queuing");
+    if (queuingDiv) {
+        queuingDiv.classList.remove("hidden");
+        queuingDiv.innerHTML = `
+            <div style="text-align: center;">
+                <p>Unable to connect to the server, please check your internet connection.</p>
+                <button class="btn btn-small" id="cancel-queue-btn">Cancel</button>
+            </div>
+        `;
+    }
+};
+
 const initializeSocket = async (mode, roomId) => {
     if (socket) {
         return;
     }
+
+    connectionTimeoutId = setTimeout(showConnectionFailed, CONNECTION_TIMEOUT_MS);
 
     // Resolves instantly for local dev; for a deployed frontend this is the
     // region whose /health check answered fastest (picked in the background
@@ -84,11 +122,18 @@ const initializeSocket = async (mode, roomId) => {
     // in ./config.js), so this almost never actually waits here.
     const serverUrl = await getServerUrl();
 
-    // cleanupSocket() (e.g. "Cancel" on the queuing screen) or a second call
-    // into startGame() could have run while we were awaiting the line above -
-    // re-check so we don't open a socket nobody wants anymore, or clobber one
-    // that's already open.
+    // cleanupSocket() (e.g. "Cancel" on the queuing screen, or showConnectionFailed()
+    // above already firing) or a second call into startGame() could have run while we
+    // were awaiting the line above - re-check so we don't open a socket nobody wants
+    // anymore, or clobber one that's already open.
     if (socket) {
+        return;
+    }
+
+    // connectionTimeoutId is only null here if the player cancelled or the timeout
+    // already fired while we were awaiting getServerUrl() above - either way, stop
+    // rather than opening a socket for an attempt that's already been abandoned.
+    if (!connectionTimeoutId) {
         return;
     }
 
@@ -96,6 +141,12 @@ const initializeSocket = async (mode, roomId) => {
     // Passing serverUrl connects to a separately-deployed backend over WSS.
     socket = io(serverUrl, { transports: ["websocket"], upgrade: false, timeout: 60000 });
     startPingMonitor(socket);
+
+    // First real confirmation we've actually reached the server - cancel the
+    // "unable to connect" timeout now that it doesn't apply anymore.
+    socket.on("connect", () => {
+        clearConnectionTimeout();
+    });
 
     socket.on("disconnect", (reason) => debugLog("[Socket] disconnected:", reason));
     socket.on("connect_error", (err) => debugLog("[Socket] connect_error:", err.message));
@@ -332,6 +383,18 @@ const initializeSocket = async (mode, roomId) => {
         }
     });
 
+    // Server emits this on every disconnect regardless of match phase. A disconnect
+    // mid-fight is already handled by a real "matchEnd" (reason: "opponent_disconnected")
+    // from the server, which show() processes normally. But a disconnect AFTER the match
+    // already ended (e.g. the winner clicking "Main Menu") no longer triggers a matchEnd
+    // at all (see server/networking/socketHandler.js's gameState.phase check) - so this is
+    // the only signal that reaches us for that case. simulateOpponentLeft() already no-ops
+    // unless the results screen is actually showing, so it's safe to call on every
+    // disconnect without checking match phase here.
+    socket.on("playerDisconnected", (disconnectedSocketId) => {
+        matchEndScreen.simulateOpponentLeft();
+    });
+
     socket.on("matchError", ({ message, reason }) => {
         debugLog("Match error: ", message, reason);
         document.getElementById("character-select").style.display = "none";
@@ -480,6 +543,8 @@ const cancelMatchmaking = () => {
 
 //handle player disconnect after game ends
 const cleanupSocket = () => {
+    clearConnectionTimeout();
+
     if(inputInterval){
         clearInterval(inputInterval);
         inputInterval = null;
