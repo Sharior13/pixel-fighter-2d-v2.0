@@ -304,15 +304,6 @@ for (const [characterId, moves] of Object.entries(ATTACK_CONFIG_MS)) {
 }
 
 // ── Combo system tuning ──────────────────────────────────────────────
-const COMBO_WINDOW_MS = 500;     // time after a hit connects to land the next hit and keep the chain alive
-const COMBO_WINDOW_FRAMES = msToFrames(COMBO_WINDOW_MS);
-const MAX_COMBO_HITS = 8;        // multiplier and stun stop shrinking past this many hits
-const DAMAGE_DECAY_PER_HIT = 0.08;  // each hit after the 1st deals 8% less damage
-const MIN_DAMAGE_MULTIPLIER = 0.4;  // damage never scales below 40%
-const BASE_HITSTUN_MS = 300;
-const STUN_DECAY_PER_HIT = 25;   // each hit after the 1st stuns 25ms less
-const MIN_HITSTUN_MS = 120;      // hitstun never drops below this, so late-combo hits still connect
-
 // build-order item 2: freeze both characters briefly on a landed hit so the
 // impact has a beat to register. Spec's stated range is 3-12 frames, but
 // that read as too subtle to notice in actual play - bumped to 20 frames
@@ -322,20 +313,96 @@ const MIN_HITSTUN_MS = 120;      // hitstun never drops below this, so late-comb
 // spec's original range instead of this value.
 const HITSTOP_DURATION_FRAMES = 12;
 
-function getComboDamageMultiplier(comboCount) {
-    const hitsIntoCombo = Math.min(comboCount, MAX_COMBO_HITS) - 1;
-    const multiplier = 1 - hitsIntoCombo * DAMAGE_DECAY_PER_HIT;
-    return Math.max(multiplier, MIN_DAMAGE_MULTIPLIER);
+// ── Combo Scaling / Damage Decay (build-order item 5 / spec section 5) ─
+// Tracks how many times the DEFENDER has been hit in an unbroken combo -
+// the spec's incrementComboCount/resetComboCount both take `defender`, not
+// `attacker`: the counter belongs to whoever's being juggled, and it resets
+// by watching the DEFENDER's own state (leaving hitstun / dropping to
+// neutral - see the resetComboCount call in gameState.js's hitstun-end
+// handling), not an attacker-side whiff/window heuristic.
+//
+// This replaces the old attacker.combo/comboWindowEndFrame pair and
+// getComboDamageMultiplier() that lived here before this item: those were
+// attacker-scoped, time-window based (a since-removed COMBO_WINDOW_MS),
+// and decayed 8% per hit to a 40% floor - none of which matches the spec's
+// exact formula (10%-per-hit decay, 10% floor).
+//
+// Only a hit that actually connects (not blocked) increments the counter -
+// blockstun isn't its own tracked state yet (that's item 8, Just Defend/
+// Perfect Parry), so scoping combo decay to real hitstun avoids a
+// defender's counter accumulating forever across a long block string that
+// never drops them to neutral. See applyHit below.
+const COMBO_DAMAGE_DECAY_PER_HIT = 0.1;
+const COMBO_DAMAGE_FLOOR = 0.1;
+
+function incrementComboCount(defender) {
+    defender.comboCount = (defender.comboCount || 0) + 1;
 }
 
-// returns hitstun in FRAMES (formula itself is still authored/reasoned about
-// in ms per the design doc - section 5/6 is about the decay formula, not the
-// unit - the result is converted to frames once, here, for scheduling)
-function getComboStunFrames(comboCount) {
-    const hitsIntoCombo = Math.min(comboCount, MAX_COMBO_HITS) - 1;
-    const stunMs = Math.max(BASE_HITSTUN_MS - hitsIntoCombo * STUN_DECAY_PER_HIT, MIN_HITSTUN_MS);
-    return msToFrames(stunMs);
+function resetComboCount(defender) {
+    defender.comboCount = 0;
 }
+
+// Actual Damage = Base Damage * Math.max(0.1, 1.0 - (comboCount * 0.1))
+function calculateScaledDamage(baseDamage, comboCount) {
+    const multiplier = Math.max(COMBO_DAMAGE_FLOOR, 1.0 - (comboCount * COMBO_DAMAGE_DECAY_PER_HIT));
+    return baseDamage * multiplier;
+}
+
+// ── Hitstun Deterioration / Gravity Scaling (build-order item 6 / spec
+// section 6) ────────────────────────────────────────────────────────────
+// Two complementary decay levers, both keyed off the same defender.
+// comboCount item 5 introduced: getScaledHitstun shortens a grounded
+// victim's hitstun per hit (this is the old getComboStunFrames placeholder,
+// renamed/reshaped to the spec's exact signature - same tuning numbers,
+// just now takes its base as a parameter instead of a hardcoded module
+// constant); getScaledGravity speeds up an airborne victim's fall per hit.
+// Either one, carried far enough, eventually forces a "combo drop" - the
+// victim recovers or lands before the attacker can follow up.
+//
+// checkComboDrop formalizes exactly the timing comparison that surfaced
+// item 5's combo-length problem (see the note left in
+// combat-system-refactor-plan.md section 6): it's a pure comparison of two
+// already-known frame numbers - defender.stunEndFrame (when they recover)
+// against attacker.earliestFollowUpFrame (set below in applyHit, from the
+// current attack's cancel-window/duration data) - so it needs no extra
+// "current frame" argument, matching the spec's 2-arg signature.
+//
+// NOTE on getScaledGravity: every move in ATTACK_CONFIG_MS currently has
+// knockback.y === 0 (see attackSystem.js's ATTACK_CONFIG_MS block) - no
+// attack launches anyone airborne yet, so this function is correctly wired
+// (gameState.js's applyGravity calls it whenever a HITSTUN'd player isn't
+// grounded) but has nothing to scale until some move's per-character data
+// gets real vertical knockback. Hitstun-shortening is the lever actually in
+// effect against current data.
+const HITSTUN_DECAY_PER_HIT_MS = 25; // each hit after the 1st stuns this much less
+const MIN_HITSTUN_MS = 120;          // hitstun never drops below this, so late-combo hits still connect
+const HITSTUN_DECAY_PER_HIT_FRAMES = msToFrames(HITSTUN_DECAY_PER_HIT_MS);
+const MIN_HITSTUN_FRAMES = msToFrames(MIN_HITSTUN_MS);
+const BASE_HITSTUN_MS = 300;
+const BASE_HITSTUN_FRAMES = msToFrames(BASE_HITSTUN_MS);
+
+const GRAVITY_SCALE_PER_HIT = 0.15; // +15% downward accel per hit into the combo
+const MAX_GRAVITY_SCALE = 2.5;      // cap so a very long combo doesn't slam a victim down instantly
+
+function getScaledHitstun(baseHitstunFrames, comboCount) {
+    const hitsIntoCombo = Math.max(0, comboCount - 1);
+    return Math.max(baseHitstunFrames - hitsIntoCombo * HITSTUN_DECAY_PER_HIT_FRAMES, MIN_HITSTUN_FRAMES);
+}
+
+function getScaledGravity(baseGravity, comboCount) {
+    const hitsIntoCombo = Math.max(0, comboCount - 1);
+    const scale = Math.min(1 + hitsIntoCombo * GRAVITY_SCALE_PER_HIT, MAX_GRAVITY_SCALE);
+    return baseGravity * scale;
+}
+
+function checkComboDrop(attacker, defender) {
+    if (!defender.stunEndFrame || !attacker.earliestFollowUpFrame) {
+        return false;
+    }
+    return attacker.earliestFollowUpFrame > defender.stunEndFrame;
+}
+
 
 // small shared helper so the two "give control back to the player" spots
 // below (hit-confirm early release, and natural attack completion) clear the
@@ -516,11 +583,12 @@ class AttackHandler {
                     attacker.currentAttackId = null;
                 }
 
-                // A whiffed attack breaks the combo chain
-                if (!attackData.hasHit) {
-                    attacker.combo = 0;
-                    attacker.comboWindowEndFrame = 0;
-                }
+                // A whiffed attack no longer needs to touch any combo state
+                // here (build-order item 5) - comboCount now lives on the
+                // defender and resets when THEY leave hitstun/drop to
+                // neutral (see gameState.js), not when the attacker's swing
+                // happens to miss. The old attacker.combo reset that used to
+                // live here is retired along with that field.
 
                 console.log(`[AttackHandler] Attack ${attackId} completed`);
             }
@@ -597,17 +665,18 @@ class AttackHandler {
         const config = attackData.config;
         const currentFrame = gameState.tickCount;
 
-        // Continue the combo if we're still inside the window from the attacker's last hit,
-        // otherwise this hit starts a fresh combo at count 1.
-        const isComboContinuation = attacker.comboWindowEndFrame && currentFrame <= attacker.comboWindowEndFrame;
-        attacker.combo = isComboContinuation ? attacker.combo + 1 : 1;
-        attacker.comboWindowEndFrame = currentFrame + COMBO_WINDOW_FRAMES;
-
-        const comboMultiplier = getComboDamageMultiplier(attacker.combo);
-
-        // Apply damage (reduced if blocking, then scaled by combo decay)
-        const baseDamage = target.isBlocking ? config.damage * 0.3 : config.damage;
-        const damage = baseDamage * comboMultiplier;
+        // Damage + combo scaling (build-order item 5): a blocked hit deals
+        // reduced flat damage and does NOT touch the combo counter (see the
+        // comment above incrementComboCount for why); an unblocked hit
+        // increments the defender's counter first, then scales off the
+        // resulting count, so the first landed hit is comboCount=1.
+        let damage;
+        if (target.isBlocking) {
+            damage = config.damage * 0.3;
+        } else {
+            incrementComboCount(target);
+            damage = calculateScaledDamage(config.damage, target.comboCount);
+        }
         target.health -= damage;
         target.damageReceived += damage;
         attackData.wasBlocked = target.isBlocking;
@@ -631,28 +700,37 @@ class AttackHandler {
                 y: config.knockback.y
             });
 
-            // Apply hitstun, shortened as the combo goes on so long chains eventually let the victim escape
+            // Apply hitstun, shortened as the combo goes on (build-order
+            // item 6) so long chains eventually let the victim escape.
             setCombatState(target, STATES.HITSTUN, currentFrame);
-            target.stunEndFrame = currentFrame + getComboStunFrames(attacker.combo);
-        }
+            target.stunEndFrame = currentFrame + getScaledHitstun(BASE_HITSTUN_FRAMES, target.comboCount);
 
-        // Getting hit ends whatever combo the target was building
-        target.combo = 0;
-        target.comboWindowEndFrame = 0;
+            // Earliest frame the attacker could realistically act again:
+            // the cancel-window frame if this attack is cancelable on hit,
+            // otherwise its natural completion. Feeds checkComboDrop, and
+            // is also what item 5's combo-length investigation computed by
+            // hand before this function existed (see the note in
+            // combat-system-refactor-plan.md section 6).
+            attacker.earliestFollowUpFrame = attacker.attackStartFrame +
+                (config.cancelableOnHit ? config.cancelWindowStartFrame : config.durationFrames);
+
+            if (checkComboDrop(attacker, target)) {
+                console.log(`[AttackHandler] combo dropped - ${target.socketId} recovers at frame ${target.stunEndFrame}, ${attacker.socketId} can't follow up until frame ${attacker.earliestFollowUpFrame}`);
+            }
+        }
 
         // Check for death
         if (target.health <= 0) {
             target.health = 0;
             setCombatState(target, STATES.DEAD, currentFrame);
             attacker.killCount++;
-            attacker.combo = 0;
-            attacker.comboWindowEndFrame = 0;
         }
 
         // Update attacker stats
         attacker.damage += damage;
 
-        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage (combo x${attacker.combo}, ${(comboMultiplier * 100).toFixed(0)}% dmg)`);
+        const comboNote = target.isBlocking ? '(blocked)' : `(combo x${target.comboCount})`;
+        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage ${comboNote}`);
     }
 
     clear() {
@@ -661,4 +739,4 @@ class AttackHandler {
     }
 }
 
-module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE };
+module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop };

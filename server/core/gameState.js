@@ -1,6 +1,6 @@
 const { getCharacterData } = require('../data/characterData.js');
 const { getMapData } = require('../data/maps.js');
-const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames } = require('./attackSystem.js');
+const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
 const hitboxSystem = require('./hitboxSystem.js');
 const { STATES } = stateMachine;
@@ -139,6 +139,10 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 isAttacking: false,
                 isStunned: false,
                 stunEndFrame: 0,
+                //build-order item 6: earliest frame this player (as an
+                //attacker) could next act - set in attackSystem.js applyHit,
+                //read by checkComboDrop
+                earliestFollowUpFrame: 0,
                 isDead: false,
                 isDashing: false,     
                 dashTimer: 0,        
@@ -173,8 +177,14 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 currentAttackId: null,
                 
                 //combat stats
-                combo: 0,
-                comboWindowEndFrame: 0,
+                //── combo counter (build-order item 5) ──
+                //lives on whoever's currently the DEFENDER of an ongoing
+                //combo (see attackSystem.js incrementComboCount/
+                //resetComboCount) - NOT an attacker-side streak. Wire field
+                //name to the client stays "combo" (public/ui/battleUI.js,
+                //public/core/render.js, botController.js all read
+                //player.combo) - only the internal name changed.
+                comboCount: 0,
                 damage: 0,
                 damageReceived: 0,
                 killCount: 0,
@@ -378,7 +388,22 @@ const applyJump = (player)=>{
 
 const applyGravity = (player, deltaTime, groundY)=>{
     if(!player.isGrounded){
-        player.velocity.y += GAME_CONFIG.gravity;
+        // Hitstun deterioration - gravity scaling (build-order item 6): an
+        // airborne combo victim falls faster with each hit, via
+        // getScaledGravity(baseGravity, comboCount) - complementary to
+        // getScaledHitstun shortening their actual hitstun timer (see
+        // attackSystem.js). Only applies mid-combo (HITSTUN state with a
+        // live comboCount); a normal jump always uses base gravity
+        // regardless of a leftover comboCount from an earlier string.
+        // NOTE: no current move launches anyone airborne (every
+        // ATTACK_CONFIG knockback.y is 0 - see attackSystem.js), so this
+        // has nothing to visibly scale yet; it's correctly wired for
+        // whenever a future move's data adds vertical knockback.
+        const gravity = (player.combatState === STATES.HITSTUN && player.comboCount > 0)
+            ? getScaledGravity(GAME_CONFIG.gravity, player.comboCount)
+            : GAME_CONFIG.gravity;
+
+        player.velocity.y += gravity;
         player.position.y += player.velocity.y;
         
         //check if landd
@@ -652,6 +677,11 @@ const gameTick = (roomId, io)=>{
             stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
             player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
+            // Combo ends once the defender leaves hitstun and drops to
+            // neutral (build-order item 5 / spec section 5) - this is the
+            // counter's one and only reset trigger now, replacing the old
+            // attacker-side whiff/time-window reset.
+            resetComboCount(player);
             console.log(`[GameState] ${player.socketId} stun ended`);
         }
 
@@ -777,7 +807,7 @@ const gameTick = (roomId, io)=>{
         //reset combo on no recent input (wall-clock: this is about real input
         //cadence over the network, not simulation timing, so it stays as-is)
         if(currentTime - player.lastInputTime > 2000){
-            player.combo = 0;
+            player.comboCount = 0;
         }
     });
     const matchEndCheck = checkMatchEnd(gameState);
@@ -823,7 +853,7 @@ const gameTick = (roomId, io)=>{
                     isDead: p.isDead,
                     state: p.state, // 'victory' or 'defeated'
                     cooldowns: msCooldowns(p.cooldowns),
-                    combo: p.combo,
+                    combo: p.comboCount,
                     lastProcessedSeq: p.lastProcessedSeq ?? -1
                 })),
                 timeRemaining: gameState.timeRemaining
@@ -838,7 +868,7 @@ const gameTick = (roomId, io)=>{
                     health: p.health,
                     damage: p.damage,
                     damageReceived: p.damageReceived,
-                    combo: p.combo,
+                    combo: p.comboCount,
                     killCount: p.killCount
                 })),
                 reason: matchEndCheck.reason
@@ -984,7 +1014,7 @@ const getClientGameState = (gameState)=>{
             isFrozen: stateMachine.isFrozen(p),
             state: p.state || 'active', // FIXED: Include state for animations
             cooldowns: msCooldowns(p.cooldowns),
-            combo: p.combo,
+            combo: p.comboCount,
             lastProcessedSeq: p.lastProcessedSeq ?? -1
         })),
         projectiles: gameState.projectiles,
