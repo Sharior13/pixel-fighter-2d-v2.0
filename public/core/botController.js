@@ -22,10 +22,9 @@ import { debugLog } from "./debug.js";
 
 // ---- DIFFICULTY TUNING ----------------------------------------------------
 // Every knob the FSM uses to decide *when*/*how well* to act lives in this
-// one object. To add a difficulty selector later, turn this into a lookup
-// keyed by a chosen level (e.g. DIFFICULTY_PRESETS.easy / .normal / .hard)
-// and swap the reference in initBotForMatch() - nothing else in this file
-// needs to change.
+// one object. This is the base preset - see PERSONALITIES below, which
+// layers partial overrides on top of this to change *playstyle* (spacing,
+// aggression, risk tolerance) independently of skill level.
 //
 // Currently set to MAX difficulty: near-instant reactions, near-perfect
 // blocking, no hesitation on openings, tight range judgment, and ability
@@ -33,7 +32,7 @@ import { debugLog } from "./debug.js";
 // spamming the cheap stuff. It still isn't literally frame-perfect/omniscient
 // (small reaction window, a short match-start settling-in beat, occasional
 // dash/jump mixups) so it doesn't feel like it's reading inputs directly.
-const DIFFICULTY = {
+const BASE_DIFFICULTY = {
     // How long (ms) the bot "thinks" before re-evaluating the fight. Even at
     // max difficulty this stays non-zero (real net/render latency plus a
     // sliver of "human" reaction time), it's just much tighter than average.
@@ -45,10 +44,21 @@ const DIFFICULTY = {
     // event - see public/core/socket.js's "matchBegin" handler.
     initialActionDelayMs: [150, 350],
 
-    // Preferred spacing in pixels, roughly matched to the ~60-250px attack
-    // ranges in server/core/attackSystem.js. Tightened vs. average play -
-    // a skilled player holds closer, more aggressive spacing.
+    // Preferred spacing in pixels. Note: preferredRange.max is NOT what
+    // stops the bot from approaching (see getReadyAttackRange, which is
+    // cooldown-driven) - it's only used for the block-reaction distance
+    // and the low-HP retreat trigger distance. preferredRange.min still
+    // drives the too-close backoff check.
     preferredRange: { min: 60, max: 130 },
+
+    // Offset (px) added on top of the cooldown-based "ready to stop
+    // approaching" range from getReadyAttackRange(). 0 = stand exactly as
+    // close as whatever's off cooldown allows. Positive = hang back further
+    // than strictly necessary (zoning, poking from max range). Negative =
+    // press in tighter than the safe spacing (rushdown, staying in the
+    // opponent's face). This is the main spacing lever for personalities,
+    // since preferredRange.max no longer gates the approach decision.
+    spacingBiasPx: 0,
 
     // Chance [0-1] the bot actually swings when it's decided "I could
     // attack right now". Maxed out - it never lets a real opening go by.
@@ -63,6 +73,15 @@ const DIFFICULTY = {
     // threshold and the follow-through chance are higher than average play.
     retreatHealthRatio: 0.3,
     retreatChance: 0.85,
+
+    // Once a retreat read triggers, how long (ms) to commit to backing off
+    // before reassessing, instead of re-rolling retreatChance every single
+    // reaction cycle. Without this the bot was flipping the retreat coin
+    // ~15-20x/sec at low HP - mostly retreating, but with just enough
+    // 15%-chance misses mixed in tick to tick that it looked like it
+    // couldn't decide between attacking and running. A committed burst
+    // reads as a deliberate "back off, then reassess" beat instead.
+    retreatCommitMs: [300, 550],
 
     // Chance [0-1] of backing off a step instead of attacking when the
     // opponent gets in too close. Low at max difficulty - a skilled player
@@ -87,6 +106,185 @@ const DIFFICULTY = {
     dashMixupChance: 0.18,
 };
 
+// ---- PERSONALITIES ---------------------------------------------------------
+// Each entry is a *partial* override merged on top of BASE_DIFFICULTY (see
+// resolvePersonality below) - list only the knobs that differ so a
+// personality reads as "what's distinctive about this character" rather
+// than restating the whole tuning block. preferredRange and abilityWeights
+// merge key-by-key too, so e.g. a personality can override just
+// preferredRange.min without having to also repeat max.
+//
+// To add a new one: add an entry here, pick it in initBotForMatch's
+// `personality` argument (or wire it up to character-select). Nothing else
+// in this file needs to change.
+const PERSONALITIES = {
+    // BASE_DIFFICULTY as-is: aggressive-but-fair all-rounder, no strong
+    // lean either way. Good default / fallback.
+    allrounder: {},
+
+    // Presses forward and stays in your face. Trades hits rather than
+    // playing safe, leans on the fast cheap stuff, rarely gives up space.
+    rushdown: {
+        spacingBiasPx: -20,
+        tooCloseBackoffChance: 0.03,
+        blockChance: 0.55,
+        retreatHealthRatio: 0.15,
+        retreatChance: 0.4,
+        abilityWeights: { basic: 5, attack1: 5, attack2: 4, special: 2, ultimate: 1 },
+        dashMixupChance: 0.28,
+        jumpMixupChance: 0.04,
+    },
+
+    // Keeps range and picks fights on its own terms - hangs back at the
+    // edge of what's off cooldown rather than closing all the way in, and
+    // leans on the longer-reaching abilities since that's what it'll
+    // actually be in range for at that spacing.
+    zoner: {
+        spacingBiasPx: 35,
+        tooCloseBackoffChance: 0.3,
+        abilityWeights: { basic: 1, attack1: 2, attack2: 2, special: 5, ultimate: 3 },
+        dashMixupChance: 0.1,
+        jumpMixupChance: 0.1,
+    },
+
+    // Patient and risk-averse: blocks almost everything, hesitates on
+    // marginal openings instead of always taking them, and starts playing
+    // defense earlier/harder when behind on health.
+    turtle: {
+        spacingBiasPx: 15,
+        attackFollowThrough: 0.6,
+        blockChance: 0.97,
+        retreatHealthRatio: 0.45,
+        retreatChance: 0.9,
+        tooCloseBackoffChance: 0.35,
+        abilityWeights: { basic: 4, attack1: 3, attack2: 2, special: 2, ultimate: 1 },
+    },
+};
+
+// Merges a named personality's overrides onto BASE_DIFFICULTY. Falls back
+// to "allrounder" (i.e. the unmodified base) for an unknown name rather
+// than throwing, since a bad/missing personality shouldn't be able to crash
+// bot init. Passing "random" (or omitting personality entirely - see
+// initBotForMatch's default below) rolls a random one from PERSONALITIES.
+const PERSONALITY_NAMES = Object.keys(PERSONALITIES);
+
+function pickRandomPersonalityName() {
+    return PERSONALITY_NAMES[Math.floor(Math.random() * PERSONALITY_NAMES.length)];
+}
+
+// Which personality actually got resolved for the current match - kept
+// around (rather than just local to resolvePersonality) so it can be
+// logged and so other code (e.g. a "fighting: Rushdown Bot" UI label) can
+// ask what it got via getBotPersonality() below.
+let currentPersonalityName = "allrounder";
+
+function resolvePersonality(name) {
+    const resolvedName = (!name || name === "random")
+        ? pickRandomPersonalityName()
+        : (PERSONALITIES[name] ? name : "allrounder");
+    currentPersonalityName = resolvedName;
+
+    const overrides = PERSONALITIES[resolvedName];
+    return {
+        ...BASE_DIFFICULTY,
+        ...overrides,
+        preferredRange: { ...BASE_DIFFICULTY.preferredRange, ...(overrides.preferredRange || {}) },
+        abilityWeights: { ...BASE_DIFFICULTY.abilityWeights, ...(overrides.abilityWeights || {}) },
+    };
+}
+
+// ---- SKILL LEVELS -----------------------------------------------------
+// Personalities (above) change *what* the bot tries to do - stay in your
+// face, keep range, turtle up. Skill levels change *how well* it executes
+// that plan, independently: a "hard" rushdown and an "easy" rushdown both
+// still press forward and lean on fast attacks, but the easy one reacts
+// slower, hesitates on openings more, blocks less reliably, and judges
+// range worse. That's why these are multipliers applied on top of
+// whichever personality got resolved (see applySkillLevel) instead of a
+// second flat-override table like PERSONALITIES - a flat override would
+// stomp the personality's own tuning (e.g. rushdown's deliberately-low
+// blockChance would just get replaced by "hard" skill's blockChance
+// instead of being scaled down further from it), collapsing every
+// personality to the same behavior at a given skill level.
+const SKILL_LEVELS = {
+    easy: {
+        // multiplies the [min,max] reactionTimeMs / initialActionDelayMs
+        // pair, so both ends scale together and reaction stays a range
+        // rather than collapsing to a single number.
+        reactionTimeMultiplier: 3.2,
+        initialActionDelayMultiplier: 1.6,
+        // multiplies attackFollowThrough / blockChance (then clamps to
+        // [0,1] - see applySkillLevel), so a personality with an already-low
+        // blockChance (rushdown) gets scaled down from that, not reset.
+        attackFollowThroughMultiplier: 0.45,
+        blockChanceMultiplier: 0.4,
+        // flat replacement, not a multiplier - range judgment is closer to
+        // "how sloppy is the margin" than "scale the existing number", and
+        // a flat px value is easier to reason about than e.g. 4px * 5.
+        rangeMisjudgeSlackPx: 26,
+    },
+    normal: {
+        reactionTimeMultiplier: 1.8,
+        initialActionDelayMultiplier: 1.25,
+        attackFollowThroughMultiplier: 0.8,
+        blockChanceMultiplier: 0.75,
+        rangeMisjudgeSlackPx: 12,
+    },
+    hard: {
+        // 1x across the board - BASE_DIFFICULTY/PERSONALITIES are already
+        // tuned at max skill (see their own comments), so "hard" is a
+        // pure passthrough rather than its own separate tuning pass.
+        reactionTimeMultiplier: 1,
+        initialActionDelayMultiplier: 1,
+        attackFollowThroughMultiplier: 1,
+        blockChanceMultiplier: 1,
+        rangeMisjudgeSlackPx: BASE_DIFFICULTY.rangeMisjudgeSlackPx,
+    },
+};
+
+const SKILL_NAMES = Object.keys(SKILL_LEVELS);
+
+function pickRandomSkillName() {
+    return SKILL_NAMES[Math.floor(Math.random() * SKILL_NAMES.length)];
+}
+
+// Which skill level actually got resolved for the current match - same
+// pattern as currentPersonalityName, exposed via getBotSkill() below.
+let currentSkillName = "hard";
+
+function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+}
+
+function applySkillLevel(config, name) {
+    const resolvedName = (!name || name === "random") ? pickRandomSkillName() : (SKILL_LEVELS[name] ? name : "hard");
+    currentSkillName = resolvedName;
+    const skill = SKILL_LEVELS[resolvedName];
+
+    const [reactMin, reactMax] = config.reactionTimeMs;
+    const [delayMin, delayMax] = config.initialActionDelayMs;
+
+    return {
+        ...config,
+        reactionTimeMs: [reactMin * skill.reactionTimeMultiplier, reactMax * skill.reactionTimeMultiplier],
+        initialActionDelayMs: [delayMin * skill.initialActionDelayMultiplier, delayMax * skill.initialActionDelayMultiplier],
+        attackFollowThrough: clamp01(config.attackFollowThrough * skill.attackFollowThroughMultiplier),
+        blockChance: clamp01(config.blockChance * skill.blockChanceMultiplier),
+        rangeMisjudgeSlackPx: skill.rangeMisjudgeSlackPx,
+    };
+}
+
+// Combines both axes: personality first (what it tries to do), then skill
+// scaled on top (how well it does it). Order matters - see applySkillLevel.
+function resolveDifficulty(personalityName, skillName) {
+    const personalityConfig = resolvePersonality(personalityName);
+    return applySkillLevel(personalityConfig, skillName);
+}
+
+// Resolved per-match in initBotForMatch() below - `let`, not `const`,
+// because which personality is active can change match to match.
+let DIFFICULTY = BASE_DIFFICULTY;
+
 // Approximate ability ranges, mirrored (not shared - the server never trusts
 // this) from server/core/attackSystem.js just so the bot can *guess*
 // whether an attack is worth throwing out. The server is still the sole
@@ -95,21 +293,51 @@ const DIFFICULTY = {
 // - which, for "play like an average player", is a feature, not a bug.
 const ABILITY_RANGE = { basic: 70, attack1: 90, attack2: 95, special: 130, ultimate: 200 };
 const ABILITY_IDS = Object.keys(ABILITY_RANGE);
+const MIN_ABILITY_RANGE = Math.min(...Object.values(ABILITY_RANGE));
+
+// How close the bot actually needs to be to stop approaching, computed
+// fresh each decision from whichever abilities are off cooldown *right
+// now* - not a fixed number. If the fast stuff is on cooldown but special
+// is up, this correctly widens so the bot stops and throws special rather
+// than closing all the way to basic range; the moment special goes on
+// cooldown, this shrinks back down and APPROACH resumes closing the gap
+// to whatever's next available. If everything's on cooldown, falls back to
+// the shortest move's reach so the bot still holds a reasonable spacing
+// instead of walking all the way into the opponent while it waits.
+function getReadyAttackRange(bot) {
+    const cooldowns = bot.cooldowns || {};
+    let widest = 0;
+    for (const id of ABILITY_IDS) {
+        if ((cooldowns[id] || 0) > 0) continue;
+        widest = Math.max(widest, ABILITY_RANGE[id]);
+    }
+    // rangeMisjudgeSlackPx is skill-driven (see SKILL_LEVELS/applySkillLevel)
+    // - a low-skill bot both misjudges its own swing range (pickAbility,
+    // below) and misjudges how close it needs to be before it's satisfied
+    // it's "in position", so the same knob drives both.
+    const baseRange = (widest || MIN_ABILITY_RANGE) + DIFFICULTY.rangeMisjudgeSlackPx;
+    // Personality spacing lever - see spacingBiasPx's comment in
+    // BASE_DIFFICULTY. Floored well above 0 so an aggressive negative bias
+    // can't collapse the range to nothing and make the bot try to stand
+    // literally on top of the opponent.
+    return Math.max(30, baseRange + (DIFFICULTY.spacingBiasPx || 0));
+}
 
 // preferredRange.max above was tuned independently of these per-ability
 // ranges and ended up wider than the short moves (basic/attack1/attack2)
-// can actually reach. In practice that meant the bot would treat ~125px as
-// "in position, stop approaching" - but at that distance only
-// special/ultimate are close enough to be legal candidates in pickAbility,
-// so it kept reattacking with whichever of those was off cooldown instead
-// of its normal fast string, i.e. attacking roughly once per special's
-// ~10s cooldown. Clamp the spacing target down to the shortest ability's
-// reach (plus the same slack pickAbility itself allows) so every ability
-// is always a legal candidate once the bot considers itself "in range" -
-// derived from ABILITY_RANGE rather than a second hardcoded number so the
-// two can't drift out of sync again.
-const MIN_ABILITY_RANGE = Math.min(...Object.values(ABILITY_RANGE));
-DIFFICULTY.preferredRange.max = Math.min(DIFFICULTY.preferredRange.max, MIN_ABILITY_RANGE + 10);
+// can actually reach, AND independently of the *actual* minimum distance
+// two characters can stand apart (hurtbox/pushbox width). Either way it's
+// a static number, and a static "stop approaching" distance can't be
+// correct for both "opponent is at max melee range" and "opponent is
+// point-blank" - it either sits wider than short moves can reach (bot
+// camps on ~125px only using long-cooldown specials) or, if clamped down
+// to match the shortest move, ends up tighter than the characters can
+// physically get without colliding (bot can never satisfy its own "in
+// range" check and just walks into the opponent forever, pushing them,
+// since APPROACH never releases). See getReadyAttackRange() below, which
+// replaces this static number with a per-decision range computed from
+// whichever abilities are actually off cooldown right now - it shrinks
+// and grows with the bot's real options instead of guessing a fixed spot.
 
 // Mirrors server/core/attackSystem.js's CANCEL_TABLE. This is the actual
 // combo system: once a hit lands, the server lets you cut recovery short
@@ -191,11 +419,59 @@ let attackStartCombo = 0;
 // we're not currently chasing a cancel.
 let comboChaseStartedAt = 0;
 
+// -- opponent attack-instance tracking (block commit + punish) -------------
+// Mirrors the "did this instance change" pattern above, but for the
+// *incoming* attack. Without this, decide()'s block roll was being
+// re-rolled every single reaction cycle (~40-90ms) for as long as
+// opponent.isAttacking stayed true - and that flag stays true for a move's
+// whole animation (startup+active+recovery, up to ~1200ms for heavy moves),
+// not just the active hit frames. At blockChance=0.95 that meant several
+// independent rolls per swing, so the odds of blocking *at least once*
+// (and parking in BLOCK for that whole animation, recovery included)
+// approached certainty even though no single roll was. Rolling once per
+// incoming attack instance and committing to it fixes that: the bot now
+// sometimes blocks the whole swing and sometimes doesn't block at all and
+// stays free to counter/punish - a single human-style read instead of a
+// biased repeated one.
+let lastSeenOpponentAttack = null;
+let opponentAttackBlockCommit = false;
+
+// Rising/falling edge on the opponent's isAttacking flag, so we can punish
+// the instant their swing ends (whiffed, or we ate/blocked it and they're
+// now in recovery) instead of waiting out whatever's left of our own
+// reactionTimeMs cadence.
+let opponentWasAttacking = false;
+
+// Small deadzone on which side the opponent is considered to be on. At
+// true point-blank range (characters overlapping/pushing against each
+// other) tiny per-tick position jitter can flip the raw sign of dx back
+// and forth, which flips dirToOpponent, which flips whether bot.facing
+// "matches" - sending the bot into the TURN branch over and over (which
+// itself sets moveDirection = dirToOpponent, i.e. still walks forward).
+// That reads exactly like "keeps running into us and pushing, barely
+// attacks": the bot is stuck relitigating which way to face instead of
+// ever reaching the attack check. Only update the committed direction
+// when dx clears a small threshold, so noise at melee range can't flip it.
+const DIRECTION_DEADZONE_PX = 8;
+let lastDirToOpponent = 1;
+
+// timestamp (performance.now()) until which a triggered low-HP retreat
+// stays committed, so it isn't re-rolled away a single reaction cycle
+// later (see retreatCommitMs above).
+let retreatCommittedUntil = 0;
+
 // Start running the bot for the current match. `socket` is the human's
 // live socket.io connection (used only to emit "botInput" - the bot has no
 // connection of its own), `opponentSocketId` is the bot's own socketId in
 // gameState.players (i.e. NOT the human's).
-const initBotForMatch = (socket, opponentSocketId) => {
+// `personality` is a key into PERSONALITIES (e.g. "rushdown", "zoner",
+// "turtle") - what the bot tries to do. Defaults to "random" (a fresh coin
+// flip every match); pass "allrounder" explicitly for the plain base.
+// `skill` is a key into SKILL_LEVELS ("easy"/"normal"/"hard") - how well it
+// executes that plan. Also defaults to "random". Both axes are independent:
+// e.g. ("rushdown", "easy") still presses forward and leans on fast
+// attacks, just slower and less reliably than ("rushdown", "hard").
+const initBotForMatch = (socket, opponentSocketId, personality = "random", skill = "random") => {
     stopBot();
 
     socketRef = socket;
@@ -203,6 +479,9 @@ const initBotForMatch = (socket, opponentSocketId) => {
     humanId = socket.id;
     latestState = null;
     inputSeq = 0;
+
+    DIFFICULTY = resolveDifficulty(personality, skill);
+    debugLog(`[bot] personality: ${currentPersonalityName}, skill: ${currentSkillName}`);
 
     fsmState = STATE.NEUTRAL;
     moveDirection = 0;
@@ -213,6 +492,11 @@ const initBotForMatch = (socket, opponentSocketId) => {
     lastSeenAttack = null;
     attackStartCombo = 0;
     comboChaseStartedAt = 0;
+    lastSeenOpponentAttack = null;
+    opponentAttackBlockCommit = false;
+    opponentWasAttacking = false;
+    lastDirToOpponent = 1;
+    retreatCommittedUntil = 0;
 
     tickHandle = setInterval(tick, TICK_MS);
 };
@@ -261,6 +545,19 @@ function tick() {
     const hitConfirmedThisAttack =
         bot.isAttacking && bot.currentAttack && (bot.combo || 0) > attackStartCombo;
     const canChase = hitConfirmedThisAttack && (CANCEL_TABLE[bot.currentAttack] || []).length > 0;
+
+    // Same identity tracking, but for the opponent's attack: roll the
+    // block decision once when a new instance starts (see the module-state
+    // comment above), and flag the tick their swing ends so we can punish
+    // immediately instead of idling out the rest of our reaction timer.
+    if (opponent.currentAttack !== lastSeenOpponentAttack) {
+        lastSeenOpponentAttack = opponent.currentAttack;
+        opponentAttackBlockCommit = (opponent.isAttacking && opponent.currentAttack)
+            ? Math.random() < DIFFICULTY.blockChance
+            : false;
+    }
+    const opponentAttackJustEnded = opponentWasAttacking && !opponent.isAttacking;
+    opponentWasAttacking = opponent.isAttacking;
 
     if (bot.isDead || opponent.isDead || bot.state !== "active" || bot.isStunned) {
         // can't or shouldn't act (dead, match over, or mid-hitstun) - just
@@ -312,6 +609,13 @@ function tick() {
             comboChaseStartedAt = 0;
         }
         moveDirection = 0;
+    } else if (opponentAttackJustEnded) {
+        // Their swing just ended - whiffed, or we blocked/ate it and
+        // they're now sitting in recovery. Decide right now instead of
+        // waiting out whatever's left of nextDecisionAt, so a real opening
+        // actually gets punished instead of closing before we react to it.
+        decide(bot, opponent, triggers, now);
+        nextDecisionAt = now + randRange(DIFFICULTY.reactionTimeMs);
     } else if (now >= nextDecisionAt) {
         decide(bot, opponent, triggers, now);
         nextDecisionAt = now + randRange(DIFFICULTY.reactionTimeMs);
@@ -342,7 +646,10 @@ function logDecision(reason, bot, dist) {
 function decide(bot, opponent, triggers, now) {
     const dx = opponent.position.x - bot.position.x;
     const dist = Math.abs(dx);
-    const dirToOpponent = dx >= 0 ? 1 : -1;
+    if (dist >= DIRECTION_DEADZONE_PX) {
+        lastDirToOpponent = dx >= 0 ? 1 : -1;
+    }
+    const dirToOpponent = lastDirToOpponent;
 
     // still "settling in" at the start of the match - allowed to move/space
     // itself normally below, but not to attack or block yet.
@@ -351,7 +658,7 @@ function decide(bot, opponent, triggers, now) {
     // -- BLOCK: opponent is mid-swing and close enough that it might matter
     // (blocking doesn't require facing them - see the note above pickAbility)
     if (settledIn && opponent.isAttacking && dist < DIFFICULTY.preferredRange.max + 40) {
-        if (Math.random() < DIFFICULTY.blockChance) {
+        if (opponentAttackBlockCommit) {
             fsmState = STATE.BLOCK;
             moveDirection = 0;
             if (!blockActive) {
@@ -368,20 +675,33 @@ function decide(bot, opponent, triggers, now) {
         blockActive = false;
     }
 
-    // -- RETREAT: low health and opponent is close - play it safer
+    // -- RETREAT: low health and opponent is close - play it safer.
+    // Once committed (below), ride out the burst without re-rolling.
+    if (now < retreatCommittedUntil) {
+        fsmState = STATE.RETREAT;
+        moveDirection = -dirToOpponent;
+        maybeMixup(bot, triggers);
+        logDecision("RETREAT (committed)", bot, dist);
+        return;
+    }
+
     const healthRatio = bot.health / (bot.maxHealth || 1);
     if (healthRatio < DIFFICULTY.retreatHealthRatio && dist < DIFFICULTY.preferredRange.max) {
         if (Math.random() < DIFFICULTY.retreatChance) {
             fsmState = STATE.RETREAT;
             moveDirection = -dirToOpponent;
+            retreatCommittedUntil = now + randRange(DIFFICULTY.retreatCommitMs);
             maybeMixup(bot, triggers);
             logDecision("RETREAT (low hp)", bot, dist);
             return;
         }
     }
 
-    // -- APPROACH: opponent is out of preferred range
-    if (dist > DIFFICULTY.preferredRange.max) {
+    // -- APPROACH: opponent is out of range of anything we could currently
+    // throw (see getReadyAttackRange - this is cooldown-aware, not a fixed
+    // spacing target)
+    const readyRange = getReadyAttackRange(bot);
+    if (dist > readyRange) {
         fsmState = STATE.APPROACH;
         moveDirection = dirToOpponent;
         maybeMixup(bot, triggers);
@@ -452,7 +772,7 @@ function pickAbility(bot, dist) {
     const cooldowns = bot.cooldowns || {};
     const candidates = ABILITY_IDS.filter(ability => {
         const onCooldown = (cooldowns[ability] || 0) > 0;
-        const inRange = dist <= ABILITY_RANGE[ability] + 15; // some slack - players misjudge range too
+        const inRange = dist <= ABILITY_RANGE[ability] + DIFFICULTY.rangeMisjudgeSlackPx; // some slack - players misjudge range too
         return !onCooldown && inRange;
     });
 
@@ -501,4 +821,12 @@ function randRange([min, max]) {
     return min + Math.random() * (max - min);
 }
 
-export { initBotForMatch, stopBot, feedBotGameState };
+// Which personality the current/most recent bot match resolved to (see
+// resolvePersonality) - e.g. for a "fighting: Rushdown Bot" UI label.
+const getBotPersonality = () => currentPersonalityName;
+
+// Which skill level the current/most recent bot match resolved to (see
+// applySkillLevel).
+const getBotSkill = () => currentSkillName;
+
+export { initBotForMatch, stopBot, feedBotGameState, getBotPersonality, getBotSkill };
