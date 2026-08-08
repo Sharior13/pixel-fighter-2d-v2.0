@@ -1,5 +1,5 @@
 import { openCharacterSelect, showOpponentPreview } from "../ui/characterSelect.js";
-import { keys, actionTriggered } from "./input.js";
+import { collectFrameInputs } from "./input.js";
 import { titleScreenUI } from "../ui/titleScreen.js";
 import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, predictTick } from "./render.js";
 import { matchEndScreen } from "../ui/matchEndScreen.js";
@@ -7,7 +7,8 @@ import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
 import { getServerUrl } from "./config.js";
 import { startPingMonitor, stopPingMonitor } from "../ui/pingDisplay.js";
-import { initBotForMatch, stopBot, feedBotGameState } from "./botController.js";
+import { initBotForMatch, stopBot } from "./botController.js";
+import { startLocalMatch, stopLocalMatch, submitBotInput } from "./localMatch.js";
 import { loadingScreenUI } from "../ui/loadingScreen.js";
 import { showStatusBanner, hideStatusBanner } from "../ui/statusBanner.js";
 import { preloadMatchAssets } from "./assetPreloader.js";
@@ -29,6 +30,13 @@ let queueStartedAt = 0;
 // gameState.players doesn't repeat that flag - still knows whether to spin up the
 // client-side bot FSM.
 let pendingOpponentIsBot = false;
+
+// true for the duration of a bot match - the fight is being simulated locally
+// (see localMatch.js) rather than by the server, so processInputs() below has
+// nothing to send and gameStateUpdate/matchEnd/etc. never arrive over the
+// socket for this match at all. Set in the "matchBegin" handler, cleared in
+// handleMatchEnd/cleanupSocket.
+let localSimActive = false;
 
 // How long we'll wait - counting from the moment startGame() calls initializeSocket()
 // all the way through region resolution (getServerUrl) AND the socket.io handshake
@@ -276,11 +284,36 @@ const initializeSocket = async (mode, roomId) => {
         });
     });
 
-    //server has confirmed every player finished preloading (or the loading-timeout
-    //safety net forced it) - actual server-authoritative game state now exists and
-    //the tick loop has started, so it's safe to start rendering.
-    socket.on("matchBegin", ({ roomId, map, gameState }) => {
+    //Server has confirmed every player finished preloading (or the loading-timeout
+    //safety net forced it). For a real PvP match, server-authoritative game state
+    //now exists and the tick loop has started server-side. For a bot match, the
+    //server deliberately did NOT start a tick loop (see matchMaking.js's
+    //actuallyBeginFight) - localSim: true tells us to build and run that state
+    //ourselves via startLocalMatch(), so the fight is simulated entirely here.
+    //Either way we end up with the same { map, gameState } shape, so the UI setup
+    //below (map, music, bot FSM, battle UI, render) doesn't need to care which.
+    socket.on("matchBegin", (data) => {
         loadingScreenUI.hide();
+
+        localSimActive = !!data.localSim;
+
+        let map, gameState;
+        if (data.localSim) {
+            const local = startLocalMatch({
+                roomId: data.roomId,
+                mapId: data.mapId,
+                players: data.players,
+                localPlayerId: socket.id,
+                onGameStateUpdate: handleGameStateUpdate,
+                onKnockoutAnimation: handleKnockoutAnimation,
+                onMatchEnd: handleMatchEnd,
+            });
+            map = local.map;
+            gameState = local.initialGameState;
+        } else {
+            map = data.map;
+            gameState = data.gameState;
+        }
 
         setMap(map);
 
@@ -294,10 +327,13 @@ const initializeSocket = async (mode, roomId) => {
         //if matchmaking paired us with an AI opponent (see server/matchmaking/
         //matchMaking.js::createBotMatch), start the client-side bot FSM - this
         //is an internal flag only, never shown in the UI, so the opponent
-        //looks like any other player.
-        const opponent = gameState.players.find(p => p.socketId !== socket.id);
-        if (pendingOpponentIsBot && opponent) {
-            initBotForMatch(socket, opponent.socketId);
+        //looks like any other player. Bot matches are always localSim (see
+        //actuallyBeginFight) so this and localSimActive are always in sync.
+        if (data.localSim) {
+            const opponent = data.players.find(p => p.socketId !== socket.id);
+            if (opponent) {
+                initBotForMatch(socket.id, opponent.socketId, undefined, undefined, submitBotInput);
+            }
         } else {
             stopBot();
         }
@@ -306,22 +342,30 @@ const initializeSocket = async (mode, roomId) => {
         initializeRender();
     });
 
-    //update game state
-    socket.on("gameStateUpdate", (state) => {
+    //update game state (real matches: arrives over the socket. Bot matches:
+    //called directly by localMatch.js's io shim with the same payload shape -
+    //see handleGameStateUpdate below.)
+    const handleGameStateUpdate = (state) => {
         updateGameState(state);
-        feedBotGameState(state);
-    });
+    };
+    socket.on("gameStateUpdate", handleGameStateUpdate);
 
-    socket.on('knockoutAnimation', (data) => {
+    const handleKnockoutAnimation = (data) => {
         debugLog('[Socket] Knockout animation triggered', data);
         triggerKOAnimation();
-    });
+    };
+    socket.on('knockoutAnimation', handleKnockoutAnimation);
 
-    //handle match end
-    socket.on("matchEnd", ({ winner, finalStats, reason }) => {
+    //handle match end (real matches: arrives over the socket. Bot matches:
+    //called directly by localMatch.js's io shim once the local sim decides
+    //the fight is over - see handleMatchEnd below.)
+    const handleMatchEnd = ({ winner, finalStats, reason }) => {
         debugLog("Match ended! Winner:", winner);
         debugLog("Final stats:", finalStats);
-        
+
+        stopLocalMatch();
+        localSimActive = false;
+
         setTimeout(() => {
            //stop game loop
            stopRender();
@@ -362,7 +406,8 @@ const initializeSocket = async (mode, roomId) => {
 
         inMatch = false;
         currentCharacterId = null;
-    });
+    };
+    socket.on("matchEnd", handleMatchEnd);
 
     //handle rematch responses
     socket.on("rematchAccepted", ({ roomId }) => {
@@ -422,61 +467,16 @@ const initializeSocket = async (mode, roomId) => {
 };
 
 const processInputs = () => {
-    const inputs = [];
-
-    let direction = 0;
-    if (keys.a) direction = -1;
-    if (keys.d) direction = 1;
-
-    inputs.push({ type: "move", direction });
-
-    //jump
-    if((keys.w || keys[' ']) && !actionTriggered.jump){
-        inputs.push({ type: "jump" });
-        actionTriggered.jump = true;
+    // Bot matches run their own local input loop (see localMatch.js) that
+    // feeds the local sim directly - nothing to send over the network for
+    // those, and predicting/reconciling against a server that isn't
+    // simulating this match would be meaningless. See matchBegin below,
+    // which sets localSimActive.
+    if (localSimActive) {
+        return;
     }
 
-    //dash
-    if(keys.Shift && !actionTriggered.dash){
-        inputs.push({ type: "dash" });
-        actionTriggered.dash = true;
-    }
-
-    //attacks
-    if(keys.ArrowLeft && !actionTriggered.attack1){
-        inputs.push({ type: "attack", ability: "attack1" });
-        actionTriggered.attack1 = true;
-    }
-    if(keys.ArrowRight && !actionTriggered.attack2){
-        inputs.push({ type: "attack", ability: "attack2" });
-        actionTriggered.attack2 = true;
-    }
-    if(keys.ArrowUp && !actionTriggered.basic){
-        inputs.push({ type: "attack", ability: "basic" });
-        actionTriggered.basic = true;
-    }
-    if(keys.ArrowDown && !actionTriggered.special){
-        inputs.push({ type: "attack", ability: "special" });
-        actionTriggered.special = true;
-    }
-    if(keys.v && !actionTriggered.ultimate){
-        inputs.push({ type: "attack", ability: "ultimate" });
-        actionTriggered.ultimate = true;
-    }
-
-    //block
-    if(keys.s){
-        if (!actionTriggered.block) {
-            inputs.push({ type: "block", activate: true });
-            actionTriggered.block = true;
-        }
-    }
-    else{
-        if(actionTriggered.block){
-            inputs.push({ type: "block", activate: false });
-            actionTriggered.block = false;
-        }
-    }
+    const inputs = collectFrameInputs();
 
     //send all inputs at once
     if(inputs.length > 0){
@@ -551,6 +551,7 @@ const cleanupSocket = () => {
     }
 
     stopBot();
+    stopLocalMatch();
     hideStatusBanner();
     loadingScreenUI.hide();
     stopPingMonitor();
@@ -559,6 +560,7 @@ const cleanupSocket = () => {
     inMatch = false;
     currentCharacterId = null;
     pendingOpponentIsBot = false;
+    localSimActive = false;
 
     //reset prediction state for the next match
     inputSequence = 0;

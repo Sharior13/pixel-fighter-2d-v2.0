@@ -225,9 +225,16 @@ const beginLoadingForRoom = (fightData) => {
 };
 
 //everyone's confirmed ready (or the loading timeout forced it) - NOW actually
-//initialize server-authoritative game state and start the tick loop. This is
-//the single place that happens, whether reached via the ready-handshake or
-//the safety-net timeout.
+//start the fight. For a real (PvP) match that means initializing
+//server-authoritative game state and starting the server's own tick loop, same
+//as always. For a bot match it deliberately does NOT do either of those - the
+//fight is simulated entirely client-side instead (see public/core/localMatch.js,
+//which reuses a generated copy of this exact server sim code - see
+//scripts/build-client-sim.js - so it can never drift out of balance/behavior
+//sync with real matches). The server's job for a bot match ends here: it just
+//tells the client which map/roster to run with. This is the single place fight
+//start happens, whether reached via the ready-handshake or the safety-net
+//timeout.
 const actuallyBeginFight = (match) => {
     try {
         match.phase = "FIGHT";
@@ -240,10 +247,33 @@ const actuallyBeginFight = (match) => {
             isBot: !!p.isBot
         }));
 
+        const isBotMatch = match.players.some(p => p.isBot);
+
+        if (isBotMatch) {
+            // No initializeGameState/startGameLoop call here - on purpose.
+            // The client builds and runs its own local game state from this
+            // same roomId/mapId/players data (see socket.js's "matchBegin"
+            // handler + localMatch.js::startLocalMatch). Real players'
+            // "playerInput" (and the now-unused "botInput") socket handlers
+            // in server/networking/socketHandler.js already no-op safely
+            // for a room with no server-side game state, so nothing extra
+            // needs to change there.
+            ioInstance.to(match.roomId).emit("matchBegin", {
+                roomId: match.roomId,
+                localSim: true,
+                mapId: match.mapId,
+                players: playersWithUsernames
+            });
+
+            debugLog(`[matchmaking] Match ${match.roomId} handed off to client-side simulation (bot match)`);
+            return;
+        }
+
         const gameState = initializeGameState(match.roomId, playersWithUsernames, match.mapId);
 
         ioInstance.to(match.roomId).emit("matchBegin", {
             roomId: match.roomId,
+            localSim: false,
             map: gameState.map,
             gameState: {
                 players: gameState.players.map(p => ({
@@ -405,4 +435,4 @@ const generateRoomCode = (length = 5)=>{
     return code;
 };
 
-module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight };
+module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight, randomBetween };

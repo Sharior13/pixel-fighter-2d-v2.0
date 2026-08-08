@@ -2,22 +2,25 @@ import { debugLog } from "./debug.js";
 // ============================================================================
 // BOT CONTROLLER - client-side FSM "brain" for the AI opponent
 // ============================================================================
-// This is the only place bot *decision-making* lives. All match rules -
-// physics, hit detection, cooldowns, HP - stay 100% server-authoritative
-// (see server/core/gameState.js). This module just:
-//   1. looks at the same gameStateUpdate broadcast render.js uses to draw
-//      the opponent,
+// This is the only place bot *decision-making* lives. Match rules - physics,
+// hit detection, cooldowns, HP - are simulated entirely client-side for bot
+// matches too now (see public/core/localMatch.js + public/core/sim/, a
+// generated browser copy of the exact same code server/core/gameState.js
+// runs for real PvP matches - never hand-edited, see scripts/build-client-sim.js).
+// This module just:
+//   1. looks at the same gameStateUpdate-shaped snapshots render.js uses to
+//      draw the opponent (fed locally now, not from a socket - see
+//      feedBotGameState below),
 //   2. runs a small finite-state machine to decide what a player holding a
 //      controller would probably do next, and
-//   3. sends that decision to the server as ordinary input messages, over a
-//      separate "botInput" socket event tagged with the bot's virtual
-//      socketId (see server/matchmaking/matchMaking.js::createBotMatch and
-//      server/networking/socketHandler.js's "botInput" handler).
+//   3. hands that decision to whatever `submitInput` callback
+//      initBotForMatch was given - localMatch.js passes one that feeds it
+//      straight into the local sim's processInput(), no network involved.
 //
 // From the human player's point of view they're just fighting an opponent
 // that took a little while to find - nothing here is ever surfaced in the
 // UI, and the input schema/cadence matches what a real client sends in
-// public/core/socket.js::processInputs() exactly, tick for tick.
+// public/core/input.js::collectFrameInputs() exactly, tick for tick.
 // ============================================================================
 
 // ---- DIFFICULTY TUNING ----------------------------------------------------
@@ -391,7 +394,7 @@ const STATE = {
 };
 
 // ---- module state -------------------------------------------------------
-let socketRef = null;
+let submitInputRef = null; // callback: (taggedInputs) => void, feeds the local sim
 let botSocketId = null; // the bot's virtual socketId in gameState.players
 let humanId = null;     // the real player's socket.id (the bot's "opponent")
 let latestState = null; // most recent gameStateUpdate payload
@@ -460,10 +463,14 @@ let lastDirToOpponent = 1;
 // later (see retreatCommitMs above).
 let retreatCommittedUntil = 0;
 
-// Start running the bot for the current match. `socket` is the human's
-// live socket.io connection (used only to emit "botInput" - the bot has no
-// connection of its own), `opponentSocketId` is the bot's own socketId in
-// gameState.players (i.e. NOT the human's).
+// Start running the bot for the current match. `localPlayerId` is the
+// human's own player id (was previously read off a live socket - bot
+// matches run fully client-side now, see public/core/localMatch.js, so
+// there's no socket involved at all). `opponentSocketId` is the bot's own
+// synthetic id in gameState.players (i.e. NOT the human's). `submitInput`
+// is called with each batch of tagged decisions instead of this module
+// emitting them anywhere itself - localMatch.js passes a function that
+// feeds them straight into the local sim's processInput().
 // `personality` is a key into PERSONALITIES (e.g. "rushdown", "zoner",
 // "turtle") - what the bot tries to do. Defaults to "random" (a fresh coin
 // flip every match); pass "allrounder" explicitly for the plain base.
@@ -471,12 +478,16 @@ let retreatCommittedUntil = 0;
 // executes that plan. Also defaults to "random". Both axes are independent:
 // e.g. ("rushdown", "easy") still presses forward and leans on fast
 // attacks, just slower and less reliably than ("rushdown", "hard").
-const initBotForMatch = (socket, opponentSocketId, personality = "random", skill = "random") => {
+const initBotForMatch = (localPlayerId, opponentSocketId, personality = "random", skill = "random", submitInput) => {
     stopBot();
 
-    socketRef = socket;
+    if (typeof submitInput !== "function") {
+        throw new Error("[bot] initBotForMatch requires a submitInput(taggedInputs) callback");
+    }
+
+    submitInputRef = submitInput;
     botSocketId = opponentSocketId;
-    humanId = socket.id;
+    humanId = localPlayerId;
     latestState = null;
     inputSeq = 0;
 
@@ -507,21 +518,21 @@ const stopBot = () => {
         clearInterval(tickHandle);
         tickHandle = null;
     }
-    socketRef = null;
+    submitInputRef = null;
     botSocketId = null;
     humanId = null;
     latestState = null;
 };
 
-// Feed the bot the latest authoritative state (called from socket.js's
-// "gameStateUpdate" handler, right alongside updateGameState()).
+// Feed the bot the latest authoritative state (called from localMatch.js's
+// local "gameStateUpdate" dispatch, right alongside updateGameState()).
 const feedBotGameState = (state) => {
     latestState = state;
 };
 
 // ---- main loop ------------------------------------------------------------
 function tick() {
-    if (!socketRef || !botSocketId || !latestState) {
+    if (!submitInputRef || !botSocketId || !latestState) {
         return;
     }
 
@@ -814,7 +825,7 @@ function pickCancelFollowup(bot) {
 function sendInputs(inputs) {
     const tagged = inputs.map(input => ({ ...input, seq: inputSeq, tick: inputSeq }));
     inputSeq++;
-    socketRef.emit("botInput", tagged);
+    submitInputRef(tagged);
 }
 
 function randRange([min, max]) {

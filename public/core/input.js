@@ -72,4 +72,67 @@ window.addEventListener('blur', () => {
     });
 });
 
-export { keys, actionTriggered };
+//build this frame's input list from the current key state. Pure - no
+//network/prediction/tagging here, just "what would a player holding these
+//keys want to do right now". Shared by socket.js (networked matches - tags
+//with seq/tick and emits) and localMatch.js (bot matches - feeds straight
+//into the local sim's processInput, no network round-trip).
+function collectFrameInputs() {
+    const inputs = [];
+
+    let direction = 0;
+    if (keys.a) direction = -1;
+    if (keys.d) direction = 1;
+    inputs.push({ type: "move", direction });
+
+    //jump
+    if ((keys.w || keys[' ']) && !actionTriggered.jump) {
+        inputs.push({ type: "jump" });
+        actionTriggered.jump = true;
+    }
+
+    //dash
+    if (keys.Shift && !actionTriggered.dash) {
+        inputs.push({ type: "dash" });
+        actionTriggered.dash = true;
+    }
+
+    //attacks
+    if (keys.ArrowLeft && !actionTriggered.attack1) {
+        inputs.push({ type: "attack", ability: "attack1" });
+        actionTriggered.attack1 = true;
+    }
+    if (keys.ArrowRight && !actionTriggered.attack2) {
+        inputs.push({ type: "attack", ability: "attack2" });
+        actionTriggered.attack2 = true;
+    }
+    if (keys.ArrowUp && !actionTriggered.basic) {
+        inputs.push({ type: "attack", ability: "basic" });
+        actionTriggered.basic = true;
+    }
+    if (keys.ArrowDown && !actionTriggered.special) {
+        inputs.push({ type: "attack", ability: "special" });
+        actionTriggered.special = true;
+    }
+    if (keys.v && !actionTriggered.ultimate) {
+        inputs.push({ type: "attack", ability: "ultimate" });
+        actionTriggered.ultimate = true;
+    }
+
+    //block
+    if (keys.s) {
+        if (!actionTriggered.block) {
+            inputs.push({ type: "block", activate: true });
+            actionTriggered.block = true;
+        }
+    } else {
+        if (actionTriggered.block) {
+            inputs.push({ type: "block", activate: false });
+            actionTriggered.block = false;
+        }
+    }
+
+    return inputs;
+}
+
+export { keys, actionTriggered, collectFrameInputs };

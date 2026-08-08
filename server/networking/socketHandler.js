@@ -144,13 +144,16 @@ const socketHandler = (io)=>{
             });           
         });
 
-        //handle inputs for the AI bot opponent, when one is in this match.
-        //The decision-making ("what should the bot do right now") happens
-        //entirely client-side in the human's browser (see
-        //public/core/botController.js) - this just forwards those decisions
-        //through the exact same processInput()/gameTick() pipeline a real
-        //player's inputs go through, so the bot is bound by the same
-        //cooldowns, hitstun, and physics as anyone else.
+        //Bot matches now run their entire fight (physics, hit detection,
+        //cooldowns - not just decision-making) client-side, see
+        //public/core/localMatch.js - the client never emits "botInput" over
+        //the socket anymore, it feeds the bot's decisions straight into its
+        //own local processInput(). This handler is kept only as a harmless
+        //safety net: processInput() below already no-ops on a missing
+        //gameState (see getMatch(...)/getGameState(...) in gameState.js), and
+        //no bot match ever has a server-side gameState anymore (see
+        //matchMaking.js's actuallyBeginFight), so nothing legitimate should
+        //ever reach here.
         socket.on("botInput", (inputs)=>{
             const match = getMatchBySocket(socket);
 
