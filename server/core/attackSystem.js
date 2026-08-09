@@ -1,5 +1,10 @@
 const { STATES, setCombatState, canAttack, triggerHitstop, isFrozen } = require('./stateMachine.js');
 const hitboxSystem = require('./hitboxSystem.js');
+// NOTE for scripts/build-client-sim.js: this specifier gets rewritten when
+// generating the browser copy (see IMPORT_PATH_OVERRIDES there) to point at
+// the client's own debug.js instead of a copy of this one - see that file's
+// comment for why.
+const { debugLog } = require('./debug.js');
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
@@ -649,7 +654,7 @@ function triggerComboBreaker(gameState, character, currentFrame) {
         setCombatState(opponent, STATES.IDLE, currentFrame);
     }
 
-    console.log(`[AttackHandler] ${character.socketId} landed a combo breaker burst`);
+    debugLog(`[AttackHandler] ${character.socketId} landed a combo breaker burst`);
     return true;
 }
 
@@ -785,7 +790,7 @@ class AttackHandler {
 
         this.activeAttacks.set(attackId, attackData);
 
-        console.log(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
+        debugLog(`[AttackHandler] ${player.socketId} initiated ${attackType}`);
 
         return {
             success: true,
@@ -870,7 +875,7 @@ class AttackHandler {
         // can't cancel into a move that's on cooldown.
         setCombatState(attacker, STATES.IDLE, gameState.tickCount);
 
-        console.log(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
+        debugLog(`[AttackHandler] ${attacker.socketId} canceled ${attackData.type} into ${requestedMove}`);
         return this.initiateAttack(gameState, attacker, requestedMove);
     }
 
@@ -955,7 +960,7 @@ class AttackHandler {
                 // happens to miss. The old attacker.combo reset that used to
                 // live here is retired along with that field.
 
-                console.log(`[AttackHandler] Attack ${attackId} completed`);
+                debugLog(`[AttackHandler] Attack ${attackId} completed`);
             }
         }
 
@@ -1029,7 +1034,7 @@ class AttackHandler {
                 attackData.hitConfirmElapsedFrames = (gameState.tickCount - attackData.startFrame) - (attackData.frozenFrames || 0);
                 this.applyHit(gameState, attacker, target, attackData);
                 attackData.hasHit = true; // Mark as hit (single hit only)
-                console.log(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
+                debugLog(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
                 break; // Only hit one target
             }
         }
@@ -1112,7 +1117,7 @@ class AttackHandler {
                 : attacker.attackStartFrame + config.durationFrames + (attackData.frozenFrames || 0) + HITSTOP_DURATION_FRAMES;
 
             if (checkComboDrop(attacker, target)) {
-                console.log(`[AttackHandler] combo dropped - ${target.socketId} recovers at frame ${target.stunEndFrame}, ${attacker.socketId} can't follow up until frame ${attacker.earliestFollowUpFrame}`);
+                debugLog(`[AttackHandler] combo dropped - ${target.socketId} recovers at frame ${target.stunEndFrame}, ${attacker.socketId} can't follow up until frame ${attacker.earliestFollowUpFrame}`);
             }
         }
 
@@ -1127,7 +1132,7 @@ class AttackHandler {
         attacker.damage += damage;
 
         const comboNote = target.isBlocking ? '(blocked)' : `(combo x${target.comboCount})`;
-        console.log(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage ${comboNote}`);
+        debugLog(`[AttackHandler] ${attacker.socketId} hit ${target.socketId} with ${attackData.type} for ${damage.toFixed(1)} damage ${comboNote}`);
     }
 
     clear() {

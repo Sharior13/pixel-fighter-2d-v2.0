@@ -83,6 +83,9 @@ const IMPORT_PATH_OVERRIDES = {
     "server/core/gameState.js": [
         { from: "from './debug.js'", to: "from '../../debug.js'" },
     ],
+    "server/core/attackSystem.js": [
+        { from: "from './debug.js'", to: "from '../../debug.js'" },
+    ],
 };
 
 const transform = (source, sourceRelPath) => {
