@@ -28,6 +28,8 @@ import {
     stopGameLoop,
     deleteGameState,
     processInput,
+    getGameState,
+    getClientGameState,
 } from "./sim/core/gameState.js";
 import { collectFrameInputs } from "./input.js";
 import { feedBotGameState } from "./botController.js";
@@ -39,6 +41,8 @@ let localPlayerId = null;
 let botPlayerId = null;
 let inputHandle = null;
 let inputSeq = 0;
+let renderSyncHandle = null;
+let onGameStateUpdateRef = null;
 
 // Build the io-shaped shim gameTick()/endMatch() emit through. `handlers` is
 // { onGameStateUpdate, onKnockoutAnimation, onMatchEnd } - the exact same
@@ -51,7 +55,12 @@ const makeLocalIo = (handlers) => ({
         emit: (event, payload) => {
             switch (event) {
                 case "gameStateUpdate":
-                    handlers.onGameStateUpdate(payload);
+                    // NOT calling handlers.onGameStateUpdate here on purpose - it's
+                    // driven by the per-animation-frame renderSyncLoop below instead,
+                    // at full frame rate straight from the live sim. This throttled
+                    // event (gameTick's every-3rd-tick broadcast, meant to save
+                    // network bandwidth - irrelevant for a local match) is still the
+                    // right cadence for bot decision-making though, so keep feeding it.
                     feedBotGameState(payload);
                     break;
                 case "knockoutAnimation":
@@ -91,6 +100,26 @@ const startLocalMatch = ({ roomId: newRoomId, mapId, players, localPlayerId: new
 
     const localIo = makeLocalIo({ onGameStateUpdate, onKnockoutAnimation, onMatchEnd });
     startGameLoop(roomId, localIo);
+
+    // Rendering reads the live local sim state directly, once per animation
+    // frame - not through gameTick's throttled "every 3rd tick" broadcast
+    // (see makeLocalIo above), which exists to save network bandwidth that a
+    // local match doesn't use. This is what actually fixes the local
+    // player's own movement rendering at full frame rate instead of ~20Hz,
+    // and (together with isLocalRender in render.js) removes the opponent's
+    // otherwise-pointless 180ms network-jitter interpolation delay.
+    onGameStateUpdateRef = onGameStateUpdate;
+    const renderSyncLoop = () => {
+        if (!roomId) {
+            return; // match ended/torn down - stop the loop
+        }
+        const liveState = getGameState(roomId);
+        if (liveState) {
+            onGameStateUpdateRef(getClientGameState(liveState));
+        }
+        renderSyncHandle = requestAnimationFrame(renderSyncLoop);
+    };
+    renderSyncHandle = requestAnimationFrame(renderSyncLoop);
 
     inputSeq = 0;
     inputHandle = setInterval(() => {
@@ -141,6 +170,11 @@ const stopLocalMatch = () => {
         clearInterval(inputHandle);
         inputHandle = null;
     }
+    if (renderSyncHandle) {
+        cancelAnimationFrame(renderSyncHandle);
+        renderSyncHandle = null;
+    }
+    onGameStateUpdateRef = null;
     if (roomId) {
         stopGameLoop(roomId);
         deleteGameState(roomId);

@@ -1,7 +1,7 @@
 import { openCharacterSelect, showOpponentPreview } from "../ui/characterSelect.js";
 import { collectFrameInputs } from "./input.js";
 import { titleScreenUI } from "../ui/titleScreen.js";
-import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, predictTick } from "./render.js";
+import { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, predictTick, setLocalRenderMode } from "./render.js";
 import { matchEndScreen } from "../ui/matchEndScreen.js";
 import { battleUI } from "../ui/battleUI.js";
 import { audioManager } from "./audioManager.js";
@@ -339,6 +339,7 @@ const initializeSocket = async (mode, roomId) => {
         }
 
         battleUI.initialize(gameState);
+        setLocalRenderMode(!!data.localSim);
         initializeRender();
     });
 

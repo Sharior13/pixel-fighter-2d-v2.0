@@ -64,6 +64,24 @@ let predictedLocalPlayer = null;
 const DEBUG_DISABLE_PREDICTION = false;
 const FIXED_DT = 1000 / 60; // matches server GAME_CONFIG.tickInterval
 
+// true for the duration of a bot match. currentGameState is being refreshed
+// directly from the live local sim every animation frame in that case (see
+// localMatch.js's render-sync loop) rather than arriving as throttled,
+// jittery network snapshots - so there's no reason to run it through
+// machinery built specifically to hide network jitter (opponent
+// interpolation's deliberate INTERP_DELAY lookback). getRenderPlayers()
+// below uses this to render straight from currentGameState instead.
+// reconcileLocalPlayer/pendingInputs replay is unaffected either way (it
+// naturally degrades to "just mirror truth" when there are no pending
+// inputs to replay, which is always true for a local match since
+// predictTick/pendingInputs are only ever populated by the networked path
+// in socket.js's processInputs) - the opponent's interpolation delay is the
+// one piece that actively needs bypassing, not just running more often.
+let isLocalRender = false;
+const setLocalRenderMode = (enabled) => {
+    isLocalRender = enabled;
+};
+
 // ---- opponent interpolation state ----
 // we intentionally render the opponent slightly in the past (INTERP_DELAY) so we always
 // have two real server snapshots to smoothly interpolate between, instead of snapping
@@ -268,6 +286,15 @@ const getRenderPlayers = () => {
         return [];
     }
 
+    if (isLocalRender) {
+        // local match: currentGameState is refreshed straight from the live
+        // sim every animation frame (see localMatch.js), so it already IS
+        // "now" - the 180ms interpolation delay below exists to smooth over
+        // network jitter that simply doesn't exist here, and would only add
+        // pointless lag to the bot's rendered position for no benefit.
+        return currentGameState.players;
+    }
+
     const interpolatedOpponent = getInterpolatedOpponentSnapshot();
 
     return currentGameState.players.map(player => {
@@ -316,13 +343,23 @@ const updateGameState = (state)=>{
         }
     }
 
-    //reconcile local player prediction against this authoritative update
-    reconcileLocalPlayer(state);
+    //reconcile local player prediction against this authoritative update - not
+    //meaningful for local matches (predictedLocalPlayer is never advanced by
+    //predictTick there, since input goes straight into the local sim instead -
+    //see isLocalRender/localMatch.js), and getRenderPlayers() already ignores
+    //predictedLocalPlayer entirely in that mode, so there's nothing to reconcile
+    if (!isLocalRender) {
+        reconcileLocalPlayer(state);
+    }
 
-    //buffer this snapshot for opponent interpolation
-    stateBuffer.push({ state, receivedAt: performance.now() });
-    if (stateBuffer.length > STATE_BUFFER_MAX) {
-        stateBuffer.shift();
+    //buffer this snapshot for opponent interpolation (not used for local matches -
+    //see isLocalRender in getRenderPlayers - so skip the pointless bookkeeping when
+    //this is being called every animation frame from localMatch.js's render-sync loop)
+    if (!isLocalRender) {
+        stateBuffer.push({ state, receivedAt: performance.now() });
+        if (stateBuffer.length > STATE_BUFFER_MAX) {
+            stateBuffer.shift();
+        }
     }
     
     //check for health changes to play hit sounds
@@ -400,6 +437,7 @@ const stopRender = ()=>{
     //reset prediction/interpolation state for the next match
     predictedLocalPlayer = null;
     stateBuffer = [];
+    isLocalRender = false;
 
     if(bgImg){
         bgImg.remove();
@@ -817,4 +855,4 @@ const initializeRender = ()=>{
     animate(lastFrameTime);
 };
 
-export { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, canvas, predictTick };
+export { initializeRender, stopRender, setMap, updateGameState, triggerKOAnimation, canvas, predictTick, setLocalRenderMode };
