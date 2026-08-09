@@ -3,69 +3,131 @@ const hitboxSystem = require('./hitboxSystem.js');
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
-// at 60fps instead of millisecond-based. ATTACK_CONFIG below is still
-// AUTHORED in milliseconds (that's the existing per-character balance data -
-// re-authoring it directly in frames with real startup/active/recovery
-// splits is section 6 / build-order item 11, not this step) but every value
-// is converted to frames once at load time, and all scheduling from then on
-// is frame-based. Nothing downstream of this file touches Date.now() for
-// combat timing anymore.
+// at 60fps instead of millisecond-based. Nothing downstream of this file
+// touches Date.now() for combat timing anymore.
 const TICK_RATE = 60;
 const FRAME_MS = 1000 / TICK_RATE;
 const msToFrames = (ms) => Math.max(1, Math.round(ms / FRAME_MS));
+
+// ── Per-move frame-data authoring (refactor-plan.md section 6, "Character
+// Attack Refactor" - done here, out of the normal build order, ahead of
+// item 7 because the generic placeholder window this replaces made combos
+// nearly impossible to test; see the note that was in that section before
+// this pass and is now resolved here) ──────────────────────────────────
+//
+// Replaces the old single `duration` + generic "elapsed >= 100ms &&
+// elapsed < duration - 100ms" hit-check window with real authored
+// startupFrames/activeFrames/recoveryFrames per move. durationFrames and
+// activeEndFrame are now DERIVED from these three, not the other way
+// around (see the ATTACK_CONFIG build loop below).
+//
+// Authored as tier + per-character speed modifier rather than 60 hand-typed
+// numbers - this is normal practice for systematic frame data and keeps
+// the actual design decision (how fast is this character, how weighty is
+// this move) legible instead of buried in arithmetic, while eliminating
+// the risk of a typo silently reopening the item-5/6 combo-margin problem
+// in one specific move. The real per-move authoring is IN these two
+// tables, not the loop that combines them.
+//
+// Combo-margin check (the thing that was broken before this pass): with
+// BASE_HITSTUN_FRAMES = 18 on a first hit, and hitstun only shrinking from
+// there, every tier's activeFrames below (3-8) is well under that even at
+// high comboCount - so the worst case (a hit landing the instant active
+// frames open) still leaves the attacker cancel-eligible several frames
+// before the defender recovers, for every move, not just a lucky late hit.
+const ATTACK_TIER_FRAMES = {
+    //           startup  active  recovery
+    attack1:    { startup: 4,  active: 3, recovery: 8  }, // light poke - fast, safe combo starter
+    attack2:    { startup: 6,  active: 4, recovery: 10 }, // medium - second hit in a chain
+    basic:      { startup: 8,  active: 5, recovery: 14 }, // heavy normal - usually a chain-ender
+    special:    { startup: 10, active: 6, recovery: 18 }, // meter move - big commitment
+    ultimate:   { startup: 14, active: 8, recovery: 20 }  // true finisher, not meant to chain further
+};
+
+// startup/recovery deltas per character, reflecting the same relative
+// weight/speed already implied by their existing damage and range values
+// (Zoro's wide sword arcs vs. Ichigo/Rukia's quick precise strikes, which
+// already shared identical old `duration` numbers move-for-move - that
+// parity is preserved here by giving them the same modifier).
+const CHARACTER_SPEED_MOD = {
+    luffy:  { startup: 0,  recovery: 0  },
+    zoro:   { startup: 1,  recovery: 2  }, // heavier, more committed swings
+    ichigo: { startup: -1, recovery: -2 }, // fast zanpakuto slashes
+    rukia:  { startup: -1, recovery: -2 }  // precise, swift ice strikes - same tempo as Ichigo's old data
+};
+
+function attackTiming(moveId, characterId) {
+    const tier = ATTACK_TIER_FRAMES[moveId];
+    const mod = CHARACTER_SPEED_MOD[characterId];
+    return {
+        startupFrames: Math.max(2, tier.startup + mod.startup),
+        activeFrames: tier.active, // kept uniform across characters - this is the number the combo-margin check above depends on, not a place for per-character flavor
+        recoveryFrames: Math.max(tier.startup + mod.startup, tier.recovery + mod.recovery)
+    };
+}
 
 const ATTACK_CONFIG_MS = {
     luffy: {
         attack1: {
             damage: 42,
             cooldown: 650,
-            duration: 560,
             knockback: { x: 8, y: 0 },
             animation: 'attack1',
             range: 60, // Short range punch
             hitboxWidth: 40,
-            hitboxHeight: 50
+            hitboxHeight: 50,
+            attackLevel: 'high',
+            meterCost: 0,
+            meterGain: 6
         },
         attack2: {
             damage: 50,
             cooldown: 850,
-            duration: 640,
             knockback: { x: 12, y: 0 },
             animation: 'attack2',
             range: 80, // Medium range kick
             hitboxWidth: 50,
-            hitboxHeight: 60
+            hitboxHeight: 60,
+            attackLevel: 'low',
+            meterCost: 0,
+            meterGain: 8
         },
         basic: {
             damage: 32,
             cooldown: 1150,
-            duration: 300,
             knockback: { x: 10, y: 0 },
             animation: 'attack_basic',
             range: 100, // Extended punch
             hitboxWidth: 60,
-            hitboxHeight: 70
+            hitboxHeight: 70,
+            attackLevel: 'mid',
+            meterCost: 0,
+            meterGain: 10
         },
         special: {
             damage: 70,
             cooldown: 10000,
-            duration: 900,
             knockback: { x: 20, y: 0 },
             animation: 'attack_special',
             range: 150, // Gomu Gomu extended attack
             hitboxWidth: 80,
-            hitboxHeight: 80
+            hitboxHeight: 80,
+            attackLevel: 'mid',
+            meterCost: 30,
+            meterGain: 5
         },
         ultimate: {
             damage: 150,
             cooldown: 30000,
-            duration: 1200,
             knockback: { x: 40, y: 0 },
             animation: 'attack_ultimate',
             dashDistance: 0,
             range: 200, // Gear Fourth range
             hitboxWidth: 100,
-            hitboxHeight: 100
+            hitboxHeight: 100,
+            attackLevel: 'mid',
+            meterCost: 100,
+            meterGain: 0
         }
     },
 
@@ -73,53 +135,63 @@ const ATTACK_CONFIG_MS = {
         attack1: {
             damage: 37,
             cooldown: 500,
-            duration: 480,
             knockback: { x: 10, y: 0 },
             animation: 'attack1',
             range: 70, // Sword slash
             hitboxWidth: 50,
-            hitboxHeight: 60
+            hitboxHeight: 60,
+            attackLevel: 'high',
+            meterCost: 0,
+            meterGain: 6
         },
         attack2: {
             damage: 45,
             cooldown: 650,
-            duration: 720,
             knockback: { x: 8, y: 0 },
             animation: 'attack2',
             range: 90, // Wide sword arc
             hitboxWidth: 60,
-            hitboxHeight: 70
+            hitboxHeight: 70,
+            attackLevel: 'low',
+            meterCost: 0,
+            meterGain: 8
         },
         basic: {
             damage: 35,
             cooldown: 1100,
-            duration: 600,
             knockback: { x: 12, y: 0 },
             animation: 'attack_basic',
             range: 110, // Three sword style
             hitboxWidth: 70,
-            hitboxHeight: 80
+            hitboxHeight: 80,
+            attackLevel: 'mid',
+            meterCost: 0,
+            meterGain: 10
         },
         special: {
             damage: 87,
             cooldown: 10000,
-            duration: 1200,
             knockback: { x: 25, y: 0 },
             animation: 'attack_special',
             range: 160, // Oni Giri
             hitboxWidth: 90,
-            hitboxHeight: 90
+            hitboxHeight: 90,
+            attackLevel: 'mid',
+            meterCost: 30,
+            meterGain: 5
         },
         ultimate: {
             damage: 195,
             cooldown: 30000,
-            duration: 1200,
             knockback: { x: 50, y: 0 },
             animation: 'attack_ultimate',
             dashDistance: 500,
             range: 250, // Asura attack
             hitboxWidth: 120,
-            hitboxHeight: 120
+            hitboxHeight: 120,
+            attackLevel: 'mid',
+            meterCost: 100,
+            meterGain: 0
         }
     },
 
@@ -127,53 +199,63 @@ const ATTACK_CONFIG_MS = {
         attack1: {
             damage: 35,
             cooldown: 430,
-            duration: 480,
             knockback: { x: 8, y: 0 },
             animation: 'attack1',
             range: 75, // Zanpakuto slash
             hitboxWidth: 45,
-            hitboxHeight: 55
+            hitboxHeight: 55,
+            attackLevel: 'high',
+            meterCost: 0,
+            meterGain: 6
         },
         attack2: {
             damage: 50,
             cooldown: 600,
-            duration: 640,
             knockback: { x: 10, y: 0 },
             animation: 'attack2',
             range: 95, // Wide slash
             hitboxWidth: 55,
-            hitboxHeight: 65
+            hitboxHeight: 65,
+            attackLevel: 'low',
+            meterCost: 0,
+            meterGain: 8
         },
         basic: {
             damage: 25,
             cooldown: 1150,
-            duration: 480,
             knockback: { x: 14, y: 0 },
             animation: 'attack_basic',
             range: 115, // Bankai slash
             hitboxWidth: 65,
-            hitboxHeight: 75
+            hitboxHeight: 75,
+            attackLevel: 'mid',
+            meterCost: 0,
+            meterGain: 10
         },
         special: {
             damage: 95,
             cooldown: 15000,
-            duration: 600,
             knockback: { x: 28, y: 0 },
             animation: 'attack_special',
             range: 150, // Getsuga Tensho
             hitboxWidth: 85,
-            hitboxHeight: 85
+            hitboxHeight: 85,
+            attackLevel: 'mid',
+            meterCost: 30,
+            meterGain: 5
         },
         ultimate: {
             damage: 200,
             cooldown: 35000,
-            duration: 720,
             knockback: { x: 55, y: 0 },
             animation: 'attack_ultimate',
             dashDistance: 400,
             range: 220, // Final Getsuga Tensho
             hitboxWidth: 115,
-            hitboxHeight: 115
+            hitboxHeight: 115,
+            attackLevel: 'mid',
+            meterCost: 100,
+            meterGain: 0
         }
     },
 
@@ -181,64 +263,66 @@ const ATTACK_CONFIG_MS = {
         attack1: {
             damage: 38,
             cooldown: 430,
-            duration: 480,
             knockback: { x: 8, y: 0 },
             animation: 'attack1',
             range: 58, // Ice sword slash
             hitboxWidth: 38,
-            hitboxHeight: 48
+            hitboxHeight: 48,
+            attackLevel: 'high',
+            meterCost: 0,
+            meterGain: 6
         },
         attack2: {
             damage: 42,
             cooldown: 600,
-            duration: 640,
             knockback: { x: 10, y: 0 },
             animation: 'attack2',
             range: 68, // Ice thrust
             hitboxWidth: 48,
-            hitboxHeight: 58
+            hitboxHeight: 58,
+            attackLevel: 'low',
+            meterCost: 0,
+            meterGain: 8
         },
         basic: {
             damage: 28,
             cooldown: 1150,
-            duration: 480,
             knockback: { x: 14, y: 0 },
             animation: 'attack_basic',
             range: 88, // Some no mai
             hitboxWidth: 58,
-            hitboxHeight: 68
+            hitboxHeight: 68,
+            attackLevel: 'mid',
+            meterCost: 0,
+            meterGain: 10
         },
         special: {
             damage: 90,
             cooldown: 15000,
-            duration: 600,
             knockback: { x: 28, y: 0 },
             animation: 'attack_special',
             range: 125, // Ice wave
             hitboxWidth: 72,
-            hitboxHeight: 72
+            hitboxHeight: 72,
+            attackLevel: 'mid',
+            meterCost: 30,
+            meterGain: 5
         },
         ultimate: {
             damage: 220,
             cooldown: 35000,
-            duration: 720,
             knockback: { x: 55, y: 0 },
             animation: 'attack_ultimate',
             dashDistance: 400,
             range: 170, // Hakka no Togame
             hitboxWidth: 98,
-            hitboxHeight: 98
+            hitboxHeight: 98,
+            attackLevel: 'mid',
+            meterCost: 100,
+            meterGain: 0
         }
     }
 };
-
-// ── frame-based scheduling constants ─────────────────────────────────
-// mirrors the old magic-number hit-check window (elapsed >= 100ms && elapsed
-// < duration - 100ms), just expressed in frames now. This is the SAME
-// behavior as before, not a balance change - a real per-move
-// startup/active/recovery authoring pass is build-order item 11 (section 6
-// of the plan), not this step.
-const STARTUP_WINDOW_MS = 100;
 
 // ── Cancel Windows (build-order item 3 / spec section 3) ──────────────
 // A cancel lets a player cut a move's RECOVERY short by chaining directly
@@ -254,10 +338,10 @@ const STARTUP_WINDOW_MS = 100;
 //
 // The table is intentionally the SAME for all four characters for now -
 // real per-character cancel routes (which specials a given character's
-// normals actually chain into) belong to the full per-move schema pass in
-// item 11 (section 6 of the plan), not this item. The shape here (light ->
-// heavier normals -> special -> ultimate) matches the spec's own example
-// ("Light -> Heavy, or Heavy -> Special").
+// normals actually chain into) are a further design pass beyond what this
+// refactor covers; the shape here (light -> heavier normals -> special ->
+// ultimate) matches the spec's own example ("Light -> Heavy, or Heavy ->
+// Special").
 const CANCEL_TABLE = {};
 function defineCancelTable(fromMove, allowedIntoMoves) {
     CANCEL_TABLE[fromMove] = allowedIntoMoves;
@@ -268,34 +352,91 @@ defineCancelTable('basic', ['special']);
 defineCancelTable('special', ['ultimate']);
 defineCancelTable('ultimate', []); // nothing to cancel a finisher into
 
+// ── Cooldown policy (found via combat-log analysis, not part of the
+// original per-move authoring pass above) ─────────────────────────────
+// Every move's authored `cooldown` (ms, in ATTACK_CONFIG_MS) predates this
+// refactor and was never revisited despite items 1-7 all assuming light/
+// medium normals are freely reusable combo pieces. In practice: attack1/
+// attack2/basic each carry a cooldown ~2.6x longer than their own
+// animation, and special/ultimate carry 10-35 SECOND cooldowns (up to 50x
+// their duration). A real fighting-game normal doesn't have a separate
+// cooldown at all - it's reusable the instant its own recovery frames end,
+// gated only by the move's own timing, not an extra timer. Confirmed via a
+// real combat log: after any 2-3 move chain (which DOES work - "canceled
+// attack1 into attack2" etc. fire correctly), every move just used locks
+// out simultaneously, frequently for multiple seconds, leaving nothing to
+// press - "Buffered attack X failed: cooldown" dominates the log.
+//
+// attack1/attack2/basic: cooldown removed entirely (cooldownFrames =
+// durationFrames - reusable the moment the move's own animation ends, no
+// additional wait, matching genre convention for normals).
+// special/ultimate: keep a real cooldown (that's the point of a meter-tier
+// move) but the authored 10-35s values are capped down to something
+// usable more than once or twice a round.
+//
+// This is an interim tuning fix, not a permanent design - item 13
+// (Resource/Meter Economy) is where cooldown-vs-resource pacing for
+// special/ultimate really belongs long-term, replacing a flat timer with
+// actual spend/regen.
+const NORMAL_MOVE_IDS = ['attack1', 'attack2', 'basic'];
+const SPECIAL_COOLDOWN_CAP_MS = 3000;
+const ULTIMATE_COOLDOWN_CAP_MS = 10000;
+
+function resolveCooldownFrames(moveId, authoredCooldownMs, durationFrames) {
+    if (NORMAL_MOVE_IDS.includes(moveId)) {
+        return durationFrames;
+    }
+    const capMs = moveId === 'ultimate' ? ULTIMATE_COOLDOWN_CAP_MS : SPECIAL_COOLDOWN_CAP_MS;
+    return Math.min(msToFrames(authoredCooldownMs), msToFrames(capMs));
+}
+
 // Build ATTACK_CONFIG with frame-converted fields, derived once at load time.
 // durationFrames/cooldownFrames/startupFrames/activeEndFrame are what the
-// rest of this file schedules against; the original ms fields are kept
-// alongside for readability/debugging only.
+// rest of this file schedules against; the original ms fields (damage,
+// cooldown, knockback, etc.) are kept alongside for readability/debugging
+// only. startupFrames/activeFrames/recoveryFrames come from attackTiming()
+// (the real per-move authoring, see the comment above ATTACK_TIER_FRAMES) -
+// durationFrames and activeEndFrame are DERIVED from those three, not
+// separately authored.
 const ATTACK_CONFIG = {};
 for (const [characterId, moves] of Object.entries(ATTACK_CONFIG_MS)) {
     ATTACK_CONFIG[characterId] = {};
     for (const [moveId, config] of Object.entries(moves)) {
-        const durationFrames = msToFrames(config.duration);
-        const cooldownFrames = msToFrames(config.cooldown);
-        const startupFrames = Math.min(msToFrames(STARTUP_WINDOW_MS), durationFrames - 1);
-        // mirrors "elapsed < duration - 100ms" - the frame after which the
-        // hit-check window closes and recovery begins
-        const activeEndFrame = Math.max(startupFrames + 1, durationFrames - startupFrames);
+        const { startupFrames, activeFrames, recoveryFrames } = attackTiming(moveId, characterId);
+        const activeEndFrame = startupFrames + activeFrames;
+        const durationFrames = activeEndFrame + recoveryFrames;
+        const cooldownFrames = resolveCooldownFrames(moveId, config.cooldown, durationFrames);
+
+        // cancel window = the recovery phase itself, same point per spec
+        // section 3, expressed per-target now (spec section 6: "an explicit
+        // list of moves this attack can cancel into, AND AT WHAT FRAME of
+        // recovery") - every target from a given source move opens at the
+        // same point (this move's own activeEndFrame) rather than each
+        // being hand-tuned separately, since there's no design reason yet
+        // for e.g. attack1->basic to unlock later than attack1->attack2.
+        const cancelableInto = (CANCEL_TABLE[moveId] || []).map(move => ({ move, atFrame: activeEndFrame }));
 
         ATTACK_CONFIG[characterId][moveId] = {
             ...config,
+            startupFrames,
+            activeFrames,
+            recoveryFrames,
+            activeEndFrame,
             durationFrames,
             cooldownFrames,
-            startupFrames,
-            activeEndFrame,
-            // cancel window = the recovery phase itself: [activeEndFrame, durationFrames)
+            // earliest ANY cancel route opens - since every route currently
+            // shares activeEndFrame (see cancelableInto above) this is just
+            // that value, but kept as its own field/name since applyHit and
+            // checkComboDrop read it as "the earliest this attacker could
+            // possibly follow up," independent of which specific move they
+            // end up canceling into.
             cancelWindowStartFrame: activeEndFrame,
-            cancelableInto: CANCEL_TABLE[moveId] || [],
+            cancelableInto,
             // must hit-confirm to cancel - matches "producing a flowing
             // combo" framing (a reward for landing hits, not a free
             // block-string tool). cancelableOnBlock is wired through end to
             // end but left false everywhere this pass - no current move is
+
             // designed as a block-string starter yet.
             cancelableOnHit: true,
             cancelableOnBlock: false
@@ -305,13 +446,22 @@ for (const [characterId, moves] of Object.entries(ATTACK_CONFIG_MS)) {
 
 // ── Combo system tuning ──────────────────────────────────────────────
 // build-order item 2: freeze both characters briefly on a landed hit so the
-// impact has a beat to register. Spec's stated range is 3-12 frames, but
-// that read as too subtle to notice in actual play - bumped to 20 frames
-// (~330ms) per playtesting feedback. This is a deliberate feel-over-spec-
-// number deviation, not an oversight; worth remembering if a later item
-// (16, Camera & Sound Feedback) re-derives per-hit-strength scaling off the
-// spec's original range instead of this value.
-const HITSTOP_DURATION_FRAMES = 12;
+// impact has a beat to register. Spec's stated range is 3-12 frames; this
+// was originally tuned to 12 (the top of that range) per playtesting
+// feedback that anything lower read as too subtle to notice.
+//
+// Brought down to 8 as part of resolving the "third issue" in
+// combat-system-refactor-plan.md section 6: at 12 frames, hitstop alone
+// was consuming most of a first hit's hitstun budget (18 frames) before a
+// cancel-into-follow-up's own startup was even counted, so a real 2-hit
+// chain landed just after the defender had already recovered. 8 keeps
+// hitstop closer to the middle of the spec's range (still clearly felt,
+// per the same playtesting logic that ruled out anything near the bottom)
+// while leaving enough of the hitstun window for an actual chain to land.
+// Combined with the cancel-window fix below (hit-confirmed cancels open at
+// the hit-confirm frame, not this move's activeEndFrame), light-into-light
+// chains now have real margin instead of none.
+const HITSTOP_DURATION_FRAMES = 8;
 
 // ── Combo Scaling / Damage Decay (build-order item 5 / spec section 5) ─
 // Tracks how many times the DEFENDER has been hit in an unbroken combo -
@@ -349,36 +499,207 @@ function calculateScaledDamage(baseDamage, comboCount) {
     return baseDamage * multiplier;
 }
 
-// ── Hitstun Deterioration / Gravity Scaling (build-order item 6 / spec
-// section 6) ────────────────────────────────────────────────────────────
-// Two complementary decay levers, both keyed off the same defender.
-// comboCount item 5 introduced: getScaledHitstun shortens a grounded
-// victim's hitstun per hit (this is the old getComboStunFrames placeholder,
-// renamed/reshaped to the spec's exact signature - same tuning numbers,
-// just now takes its base as a parameter instead of a hardcoded module
-// constant); getScaledGravity speeds up an airborne victim's fall per hit.
-// Either one, carried far enough, eventually forces a "combo drop" - the
-// victim recovers or lands before the attacker can follow up.
+// ── Knockback Scaling (extends the item 5/6 combo-decay pattern) ──────
+// Same rationale as damage/hitstun decay above: knockback needs to shrink
+// as a combo goes on too, or accumulated push-back drifts the defender out
+// of range for a later, longer-reaching move before a real chain ever gets
+// the chance to land - the exact spacing failure found finishing the
+// item-11 pass (see combat-system-refactor-plan.md section 6, "new,
+// separate finding"). The first hit in a combo keeps its full, per-move-
+// authored knockback; only hits after that shrink.
+const KNOCKBACK_DECAY_PER_HIT = 0.3; // each hit after the 1st pushes 30% less far
+const KNOCKBACK_FLOOR = 0.3;         // knockback never drops below 30% of the move's base
+
+function getScaledKnockback(baseKnockback, comboCount) {
+    const hitsIntoCombo = Math.max(0, comboCount - 1);
+    const multiplier = Math.max(KNOCKBACK_FLOOR, 1 - hitsIntoCombo * KNOCKBACK_DECAY_PER_HIT);
+    return baseKnockback * multiplier;
+}
+
+// ── Combo Breakers / Bursts (build-order item 7 / spec section 7) ─────
+// No dedicated file named for this item in the plan's file-structure
+// section (section 8 only calls out comboSystem.js for sections 5/6/15,
+// which haven't been extracted out of this file yet either) - kept here
+// alongside the other combo-related functions for now, same bucket as
+// getScaledHitstun/calculateScaledDamage pending that future extraction.
 //
-// checkComboDrop formalizes exactly the timing comparison that surfaced
-// item 5's combo-length problem (see the note left in
-// combat-system-refactor-plan.md section 6): it's a pure comparison of two
-// already-known frame numbers - defender.stunEndFrame (when they recover)
-// against attacker.earliestFollowUpFrame (set below in applyHit, from the
-// current attack's cancel-window/duration data) - so it needs no extra
-// "current frame" argument, matching the spec's 2-arg signature.
+// DEVIATION FROM SPEC (deliberate, see combat-system-refactor-plan.md's
+// build-order section for the full note): spec's triggerComboBreaker
+// checks a fixed button combination entered once. This implements a timed
+// precision-bar challenge instead - same purpose (a skill gate on an
+// escape option, not a free button press) via a different mechanic
+// (execution-under-pressure instead of memorization).
+//
+// Wire-protocol choice: rather than adding a new input type (would need a
+// client-side control that doesn't exist), this repurposes the existing
+// 'jump' input as the CONFIRM press - jumping while stunned is already
+// illegal (canPerformAction rejects it), so intercepting it specifically
+// while a challenge is pending doesn't collide with jump's normal use. See
+// handleBurstInput and its call site in gameState.js's
+// consumeOldestValidInput.
+//
+// REVISED after real-play feedback: this originally required a separate
+// manual "start" press (a 'jump' input while stunned) before the confirm
+// window opened, sized to fit inside what was left of hitstun after
+// hitstop+buffer delay ate into it. That worked in synchronous, zero-
+// latency local testing but was never actually reachable in real play -
+// every test this whole session validated SERVER-side window consistency
+// via processInput() calls timed exactly against server tick counts, which
+// never modeled real round-trip network latency (40-100ms+) or human
+// input timing on top of it. A two-round-trip sequence (start, then
+// confirm) each squeezed into a handful of frames doesn't survive that.
+// The challenge now auto-arms the instant hitstun begins (applyHit below),
+// cutting the requirement to a single input and a single round trip, with
+// a window sized to actually be humanly landable.
+const BURST_METER_MAX = 100;
+const BURST_METER_PER_DAMAGE = 0.5; // how much burst meter each point of damage taken fills
+const BURST_TARGET_START_FRAME = 6;  // sweet-spot window opens this many frames after the hit that armed the challenge
+const BURST_TARGET_END_FRAME = 14;   // ...and closes here - an 8 frame (~133ms) confirm window, comfortably inside even a decayed hitstun's 16-18 frame budget with room for one real round trip
+const BURST_CHALLENGE_DURATION_FRAMES = 20; // if no confirm arrives by this many frames after arming, the challenge lapses (see gameState.js's per-tick timeout check) - past the target window on purpose, since a confirm can still resolve (just fail) after the window closes rather than needing to land exactly inside it to even register
+const BURST_INVINCIBILITY_FRAMES = 30; // ~500ms of safety after a successful burst
+const BURST_SEPARATION_DISTANCE = 150; // how far apart both characters land on a successful burst
+
+// adds to the secondary resource, typically from taking damage (spec
+// wording) - called from applyHit below for every point of damage a
+// defender actually takes, blocked or not.
+function fillBurstMeter(character, amount) {
+    character.burstMeter = Math.min(BURST_METER_MAX, (character.burstMeter || 0) + Math.max(0, amount) * BURST_METER_PER_DAMAGE);
+}
+
+// checks whether the meter is full
+function isBurstAvailable(character) {
+    return (character.burstMeter || 0) >= BURST_METER_MAX;
+}
+
+// Handles a 'jump' input arriving while a burst challenge is pending -
+// this is always a confirm attempt now (see the design note above; the
+// challenge arms itself, there's no separate "start" input anymore).
+// Returns true if this input was consumed as a burst attempt (whether or
+// not the burst itself succeeded), false if there was no pending challenge
+// at all - the caller falls through to normal jump handling in that case.
+function handleBurstInput(gameState, player, currentFrame) {
+    if (!player.burstChallenge) {
+        return false;
+    }
+    triggerComboBreaker(gameState, player, currentFrame);
+    return true;
+}
+
+// Resolves an in-progress precision-bar challenge. Success requires the
+// confirm press (this call) to land inside [BURST_TARGET_START_FRAME,
+// BURST_TARGET_END_FRAME] frames after the challenge started - outside
+// that window, the burst fails. The meter is spent either way (see the
+// design note in combat-system-refactor-plan.md - a whiffed timing attempt
+// still costs the resource, or the challenge could be spammed for free
+// retries every time hitstun allows another 'jump' input).
+function triggerComboBreaker(gameState, character, currentFrame) {
+    const challenge = character.burstChallenge;
+    character.burstChallenge = null;
+    character.burstMeter = 0;
+
+    if (!challenge) {
+        return false;
+    }
+
+    const elapsed = currentFrame - challenge.startFrame;
+    const success = elapsed >= BURST_TARGET_START_FRAME && elapsed <= BURST_TARGET_END_FRAME;
+    if (!success) {
+        return false;
+    }
+
+    // cancels all pending hitstun/damage, resets this character to neutral
+    character.stunEndFrame = 0;
+    setCombatState(character, STATES.IDLE, currentFrame);
+    resetComboCount(character);
+    character.velocity.x = 0;
+    character.velocity.y = 0;
+
+    // temporary invincibility, checked in checkHit above
+    character.isInvincible = true;
+    character.invincibilityEndFrame = currentFrame + BURST_INVINCIBILITY_FRAMES;
+
+    // "screen-clearing explosion" - reset BOTH characters to neutral,
+    // separated to a fixed safe distance. An instant reposition rather
+    // than a velocity-based push: velocity-based knockback only actually
+    // moves someone while they can't move under their own input (see
+    // applyKnockbackMovement in gameState.js) - both characters are being
+    // set to IDLE right here, so a velocity approach would just get
+    // stomped by the client's next move input. A snap-to-neutral-spacing
+    // reset also matches "resets both characters to neutral" more directly
+    // than a physics push would.
+    const opponent = gameState.players.find(p => p.socketId !== character.socketId && !p.isDead);
+    if (opponent) {
+        const boundaries = gameState.map.boundaries;
+        const leftBound = boundaries.left + character.size.width / 2;
+        const rightBound = boundaries.right - character.size.width / 2;
+        const midpoint = (character.position.x + opponent.position.x) / 2;
+        const dir = character.position.x <= opponent.position.x ? -1 : 1;
+
+        character.position.x = Math.max(leftBound, Math.min(rightBound, midpoint + dir * (BURST_SEPARATION_DISTANCE / 2)));
+        opponent.position.x = Math.max(leftBound, Math.min(rightBound, midpoint - dir * (BURST_SEPARATION_DISTANCE / 2)));
+        opponent.velocity.x = 0;
+
+        // the attacker's own swing gets cut short too - the burst is a
+        // full reset of the exchange, not just an escape for the defender
+        if (opponent.currentAttackId) {
+            gameState.attackHandler.activeAttacks.delete(opponent.currentAttackId);
+            opponent.currentAttackId = null;
+        }
+        opponent.stunEndFrame = 0;
+        setCombatState(opponent, STATES.IDLE, currentFrame);
+    }
+
+    console.log(`[AttackHandler] ${character.socketId} landed a combo breaker burst`);
+    return true;
+}
+
+// ── Hitstun Scaling / Gravity Scaling (originally build-order item 6 /
+// spec section 6, "Hitstun Deterioration" - deliberately inverted from the
+// spec, see below) ──────────────────────────────────────────────────────
+// Spec section 6's premise: hitstun SHRINKS as comboCount rises, so a long
+// combo eventually lets the victim escape on its own - deterioration is
+// the safety valve against an inescapable combo. That's what this used to
+// do (decay-per-hit down to a floor).
+//
+// Reversed by design request: item 7 (Combo Breakers/Bursts) is the
+// intended safety valve instead - a skill-gated escape the victim can
+// actively use, rather than a passive timer that bails them out
+// regardless of whether they play well. With burst filling that role,
+// hitstun shrinking on its own was working against the point of a combo
+// system: it made stacking hits progressively LESS threatening (each hit
+// stunned the victim for less time than the last), when the intent is the
+// opposite - a combo should feel escalating and dangerous, with getting
+// out of it something the victim has to earn (fill meter, land the
+// precision-bar timing) rather than something that just happens.
+//
+// getScaledHitstun now GROWS a grounded victim's hitstun per hit instead
+// of shrinking it, capped (MAX_HITSTUN_FRAMES) so a combo without a burst
+// attempt is dangerous but not a literal forever-lock - that hard ceiling
+// is a stand-in for what item 15 (Combo Cycle Breaker - "a hard cap
+// distinct from damage/hitstun scaling") will eventually own properly;
+// picture this cap as a temporary version of that, not a substitute for
+// building it. getScaledGravity (below) already pointed the right
+// direction before this change - it speeds up an airborne victim's fall
+// as the combo goes on, i.e. also gets MORE oppressive per hit, not less -
+// so it didn't need to flip, only hitstun did.
+//
+// checkComboDrop (bottom of this section) still exists as a pure frame
+// comparison, but "the combo gets dropped by its own deterioration" is no
+// longer really the expected path now that hitstun doesn't shrink - a real
+// drop is now expected to come from the victim successfully bursting, or
+// (rarely) the attacker just being slow/mistimed. Kept for diagnostic
+// value either way.
 //
 // NOTE on getScaledGravity: every move in ATTACK_CONFIG_MS currently has
 // knockback.y === 0 (see attackSystem.js's ATTACK_CONFIG_MS block) - no
 // attack launches anyone airborne yet, so this function is correctly wired
 // (gameState.js's applyGravity calls it whenever a HITSTUN'd player isn't
 // grounded) but has nothing to scale until some move's per-character data
-// gets real vertical knockback. Hitstun-shortening is the lever actually in
-// effect against current data.
-const HITSTUN_DECAY_PER_HIT_MS = 25; // each hit after the 1st stuns this much less
-const MIN_HITSTUN_MS = 120;          // hitstun never drops below this, so late-combo hits still connect
-const HITSTUN_DECAY_PER_HIT_FRAMES = msToFrames(HITSTUN_DECAY_PER_HIT_MS);
-const MIN_HITSTUN_FRAMES = msToFrames(MIN_HITSTUN_MS);
+// gets real vertical knockback.
+const HITSTUN_GROWTH_PER_HIT_MS = 60; // each hit after the 1st stuns this much LONGER
+const MAX_HITSTUN_MS = 1500;          // hard ceiling - a combo without a burst is dangerous, not literally endless
+const HITSTUN_GROWTH_PER_HIT_FRAMES = msToFrames(HITSTUN_GROWTH_PER_HIT_MS);
+const MAX_HITSTUN_FRAMES = msToFrames(MAX_HITSTUN_MS);
 const BASE_HITSTUN_MS = 300;
 const BASE_HITSTUN_FRAMES = msToFrames(BASE_HITSTUN_MS);
 
@@ -387,7 +708,7 @@ const MAX_GRAVITY_SCALE = 2.5;      // cap so a very long combo doesn't slam a v
 
 function getScaledHitstun(baseHitstunFrames, comboCount) {
     const hitsIntoCombo = Math.max(0, comboCount - 1);
-    return Math.max(baseHitstunFrames - hitsIntoCombo * HITSTUN_DECAY_PER_HIT_FRAMES, MIN_HITSTUN_FRAMES);
+    return Math.min(baseHitstunFrames + hitsIntoCombo * HITSTUN_GROWTH_PER_HIT_FRAMES, MAX_HITSTUN_FRAMES);
 }
 
 function getScaledGravity(baseGravity, comboCount) {
@@ -469,7 +790,7 @@ class AttackHandler {
         return {
             success: true,
             attackId,
-            duration: attackConfig.duration,
+            durationFrames: attackConfig.durationFrames,
             animation: attackConfig.animation
         };
     }
@@ -479,15 +800,44 @@ class AttackHandler {
     // designated cancel window and whether requestedMove is one it's
     // legal to cancel into. Does not mutate anything - see executeCancel
     // for the actual interrupt.
+    //
+    // cancelableInto is now an array of {move, atFrame} (refactor-plan.md
+    // section 6 - "an explicit list of moves this attack can cancel into,
+    // and at what frame of recovery"), not a flat array of move names - so
+    // this looks up the specific route instead of a blanket cancelWindowStartFrame
+    // for every target.
     canCancel(attackData, requestedMove, currentFrame) {
         const config = attackData.config;
 
-        if (!config.cancelableInto.includes(requestedMove)) {
+        const route = config.cancelableInto.find(r => r.move === requestedMove);
+        if (!route) {
             return false;
         }
 
-        const elapsedFrames = currentFrame - attackData.startFrame;
-        const inCancelWindow = elapsedFrames >= config.cancelWindowStartFrame && elapsedFrames < config.durationFrames;
+        // hitstop-aware, matching updateAttacks' elapsedFrames (see the note
+        // there): frozenFrames accumulates while the attacker is frozen, so
+        // this has to subtract it too, or a cancel request checked right as
+        // the attacker unfreezes would see an elapsedFrames that already
+        // jumped past durationFrames from the freeze alone.
+        const elapsedFrames = (currentFrame - attackData.startFrame) - (attackData.frozenFrames || 0);
+
+        // "third issue" fix (combat-system-refactor-plan.md section 6): a
+        // hit-confirmed cancel opens the instant the hit actually landed
+        // (attackData.hitConfirmElapsedFrames, set in checkHit), not after
+        // this move's own active frames finish playing out
+        // (route.atFrame === activeEndFrame). The old activeEndFrame-based
+        // wait was tacking this move's remaining active frames onto the
+        // deficit against the DEFENDER's hitstun budget for no reason - the
+        // hit already landed, there's nothing left to gain by waiting out
+        // the rest of the swing. Falls back to route.atFrame for a
+        // block-confirmed cancel, which has no equivalent "confirm moment"
+        // yet (item 8, Just Defend/Perfect Parry, is what will eventually
+        // give blockstun its own timeline).
+        const cancelOpensAt = (config.cancelableOnHit && attackData.hasHit && attackData.hitConfirmElapsedFrames !== undefined)
+            ? attackData.hitConfirmElapsedFrames
+            : route.atFrame;
+
+        const inCancelWindow = elapsedFrames >= cancelOpensAt && elapsedFrames < config.durationFrames;
         if (!inCancelWindow) {
             return false;
         }
@@ -536,13 +886,28 @@ class AttackHandler {
             }
 
             // hitstop: this attack's clock doesn't advance while its owner
-            // is frozen - elapsedFrames is currentFrame-relative, so simply
-            // not evaluating it this tick is all pausing requires
+            // is frozen. NOTE (found live-testing the item-11 frame-data
+            // pass): "not evaluating it this tick" is NOT the same as
+            // pausing elapsedFrames - elapsedFrames is recomputed fresh
+            // every tick as (currentFrame - startFrame), an absolute
+            // difference that has no memory of frozen gaps. Skipping
+            // evaluation only stops RE-TRIGGERING things while frozen; the
+            // instant the attacker unfreezes, that raw subtraction still
+            // includes every frozen tick, so elapsedFrames JUMPS by the
+            // full hitstop duration in one step - which silently ate the
+            // entire active/cancel-window budget on every hit (12 frozen
+            // frames vs. 3-8 frames of active window), making an attack
+            // look "already past recovery" the instant it unfreezes,
+            // before a buffered cancel input ever got a chance to be
+            // checked. attackData.frozenFrames tracks the actual accumulated
+            // freeze so it can be subtracted back out below - THIS is what
+            // makes the clock genuinely pause, not the isFrozen skip alone.
             if (isFrozen(attacker)) {
+                attackData.frozenFrames = (attackData.frozenFrames || 0) + 1;
                 continue;
             }
 
-            const elapsedFrames = currentFrame - attackData.startFrame;
+            const elapsedFrames = (currentFrame - attackData.startFrame) - (attackData.frozenFrames || 0);
             const config = attackData.config;
 
             // sub-phase transitions - only move the attacker's combatState
@@ -622,8 +987,10 @@ class AttackHandler {
 
         // Range-based and hitbox-based hit detection
         for (const target of gameState.players) {
-            // Skip self and dead players
-            if (target.socketId === attacker.socketId || target.isDead) continue;
+            // Skip self, dead players, and anyone currently invincible
+            // (build-order item 7: a successful combo-breaker burst grants
+            // brief invincibility - see triggerComboBreaker/isInvincible)
+            if (target.socketId === attacker.socketId || target.isDead || target.isInvincible) continue;
 
             // Use attack-specific range and hitbox
             const attackRange = config.range || 50; // Use attack's range
@@ -653,6 +1020,13 @@ class AttackHandler {
             });
 
             if (hit) {
+                // Recorded BEFORE applyHit runs (build-order item 6 reads
+                // this inside applyHit for earliestFollowUpFrame) - same
+                // frozen-frame-adjusted units canCancel compares against,
+                // so a hit-confirmed cancel can open right here instead of
+                // waiting for this move's own active frames to finish
+                // playing out. See canCancel below.
+                attackData.hitConfirmElapsedFrames = (gameState.tickCount - attackData.startFrame) - (attackData.frozenFrames || 0);
                 this.applyHit(gameState, attacker, target, attackData);
                 attackData.hasHit = true; // Mark as hit (single hit only)
                 console.log(`[AttackHandler] Hit detected - Range: ${attackRange}, Hitbox: ${attackHitboxWidth}x${attackHitboxHeight}`);
@@ -681,6 +1055,10 @@ class AttackHandler {
         target.damageReceived += damage;
         attackData.wasBlocked = target.isBlocking;
 
+        // Combo breaker meter (build-order item 7): fills from taking
+        // damage, blocked or not - see fillBurstMeter above.
+        fillBurstMeter(target, damage);
+
         // Impact freeze - both characters pause briefly so the hit has a
         // beat to register (build-order item 2). Applies whether or not the
         // target blocked; a lighter/shorter freeze specifically for blocked
@@ -695,8 +1073,12 @@ class AttackHandler {
         // dead (see hitboxSystem.js for the split/redirect logic).
         if (!target.isBlocking) {
             const knockbackDir = target.position.x > attacker.position.x ? 1 : -1;
+            // Scaled by combo count (see getScaledKnockback above) so a
+            // combo's later hits don't push the defender out of range for
+            // the next move before a chain even gets a chance to land.
+            const scaledKnockbackX = getScaledKnockback(config.knockback.x, target.comboCount);
             hitboxSystem.applyCornerPushback(attacker, target, {
-                x: config.knockback.x * knockbackDir,
+                x: scaledKnockbackX * knockbackDir,
                 y: config.knockback.y
             });
 
@@ -705,14 +1087,29 @@ class AttackHandler {
             setCombatState(target, STATES.HITSTUN, currentFrame);
             target.stunEndFrame = currentFrame + getScaledHitstun(BASE_HITSTUN_FRAMES, target.comboCount);
 
-            // Earliest frame the attacker could realistically act again:
-            // the cancel-window frame if this attack is cancelable on hit,
-            // otherwise its natural completion. Feeds checkComboDrop, and
-            // is also what item 5's combo-length investigation computed by
-            // hand before this function existed (see the note in
-            // combat-system-refactor-plan.md section 6).
-            attacker.earliestFollowUpFrame = attacker.attackStartFrame +
-                (config.cancelableOnHit ? config.cancelWindowStartFrame : config.durationFrames);
+            // Combo breaker (build-order item 7): arm the precision-bar
+            // challenge the instant hitstun begins, if the meter's full and
+            // nothing's already pending. Auto-armed rather than requiring a
+            // manual start press - see the design note above
+            // BURST_TARGET_START_FRAME for why (a two-round-trip start+
+            // confirm sequence didn't survive real network latency).
+            if (!target.burstChallenge && isBurstAvailable(target)) {
+                target.burstChallenge = { startFrame: currentFrame };
+            }
+
+            // Earliest frame the attacker could realistically act again.
+            // "third issue" fix (combat-system-refactor-plan.md section 6):
+            // since a hit-confirmed cancel now opens at the hit-confirm
+            // frame itself (see checkHit/canCancel above) rather than
+            // waiting for this move's active frames to finish, the only
+            // remaining gate before the attacker can act is hitstop itself
+            // - so this is just "now + the freeze this hit is about to
+            // trigger," not attackStartFrame + a window offset anymore.
+            // Non-cancelable moves still have to play out their full
+            // duration first, same as before.
+            attacker.earliestFollowUpFrame = config.cancelableOnHit
+                ? currentFrame + HITSTOP_DURATION_FRAMES
+                : attacker.attackStartFrame + config.durationFrames + (attackData.frozenFrames || 0) + HITSTOP_DURATION_FRAMES;
 
             if (checkComboDrop(attacker, target)) {
                 console.log(`[AttackHandler] combo dropped - ${target.socketId} recovers at frame ${target.stunEndFrame}, ${attacker.socketId} can't follow up until frame ${attacker.earliestFollowUpFrame}`);
@@ -739,4 +1136,4 @@ class AttackHandler {
     }
 }
 
-module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop };
+module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop, getScaledKnockback, fillBurstMeter, isBurstAvailable, triggerComboBreaker, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES };

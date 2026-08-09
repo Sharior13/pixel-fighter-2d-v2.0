@@ -63,6 +63,28 @@ const AUTOGEN_BANNER = (sourceRelPath) => `// ==================================
 
 `;
 
+// Some server files need to bind to a DIFFERENT implementation of a
+// dependency in the browser, rather than a generated copy of the server's
+// own version. gameState.js's debug-logging import is the case that exists
+// today: server/core/debug.js reads process.env.DEBUG, which doesn't exist
+// in a browser - a generated copy would either crash or (if written
+// defensively) always stay silent, neither of which is useful. What the
+// browser copy should actually do is log through the CLIENT's own real
+// debug.js (public/core/debug.js - localStorage/?debug=1-toggled), which
+// already exports the same debugLog/debugWarn/debugError names. This is a
+// deliberate per-environment swap, not drift: gameState.js's own log call
+// sites (what gets logged, and when) stay identical in both copies - only
+// which debug.js answers "is debug mode on right now" differs, which is
+// the correct behavior given server and client debug toggles are
+// independent switches by design (see public/core/debug.js's own comment).
+// Keyed by source-relative path; each entry is a literal specifier rewrite
+// applied (after the require->import transform) to that file only.
+const IMPORT_PATH_OVERRIDES = {
+    "server/core/gameState.js": [
+        { from: "from './debug.js'", to: "from '../../debug.js'" },
+    ],
+};
+
 const transform = (source, sourceRelPath) => {
     if (!MODULE_EXPORTS.test(source)) {
         throw new Error(
@@ -76,6 +98,16 @@ const transform = (source, sourceRelPath) => {
     out = out.replace(NAMED_REQUIRE, (_match, names, _quote, specifier) => `import {${names}} from '${specifier}';`);
     out = out.replace(NAMESPACE_REQUIRE, (_match, name, _quote, specifier) => `import * as ${name} from '${specifier}';`);
     out = out.replace(MODULE_EXPORTS, "export {");
+
+    for (const { from, to } of IMPORT_PATH_OVERRIDES[sourceRelPath] || []) {
+        if (!out.includes(from)) {
+            throw new Error(
+                `[build-client-sim] ${sourceRelPath}: expected import path override target "${from}" ` +
+                `not found after transform - the import this override targets may have changed shape.`
+            );
+        }
+        out = out.replace(from, to);
+    }
 
     // safety net: if anything still looks like CommonJS after the rewrite,
     // fail loudly instead of shipping half-converted code to the browser

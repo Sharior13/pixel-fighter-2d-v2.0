@@ -1,9 +1,14 @@
 const { getCharacterData } = require('../data/characterData.js');
 const { getMapData } = require('../data/maps.js');
-const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity } = require('./attackSystem.js');
+const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
 const hitboxSystem = require('./hitboxSystem.js');
 const { STATES } = stateMachine;
+// NOTE for scripts/build-client-sim.js: this specifier gets rewritten when
+// generating the browser copy (see IMPORT_PATH_OVERRIDES there) to point at
+// the client's own debug.js instead of a copy of this one - see that file's
+// comment for why.
+const { debugLog, debugWarn, debugError } = require('./debug.js');
 
 const gameStates = new Map();
 const gameLoopIntervals = new Map();
@@ -43,13 +48,13 @@ const GAME_CONFIG = {
 //initialize game state when match starts
 const initializeGameState = (roomId, playerData, mapId)=>{
     if(gameStates.has(roomId)){
-        console.warn(`[GameState] Game state already exists for room ${roomId}`);
+        debugWarn(`[GameState] Game state already exists for room ${roomId}`);
         return gameStates.get(roomId);
     }
 
     //load map
     const mapData = getMapData(mapId);
-    console.log(`[GameState] Initializing game with map: ${mapData.name}`);
+    debugLog(`[GameState] Initializing game with map: ${mapData.name}`);
 
     const gameState = {
         roomId,
@@ -73,7 +78,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
             const charData = getCharacterData(p.character);
             
             if(!charData){
-                console.error(`[GameState] Invalid character: ${p.character}`);
+                debugError(`[GameState] Invalid character: ${p.character}`);
                 throw new Error(`Invalid character: ${p.character}`);
             }
 
@@ -188,6 +193,18 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 damage: 0,
                 damageReceived: 0,
                 killCount: 0,
+
+                //── combo breaker / burst (build-order item 7) ──
+                //burstMeter fills from taking damage (fillBurstMeter);
+                //burstChallenge holds the in-progress precision-bar timing
+                //attempt ({startFrame}) once a 'jump' input while stunned
+                //starts one - see handleBurstInput/triggerComboBreaker.
+                //isInvincible/invincibilityEndFrame are the brief safety
+                //window granted by a successful burst.
+                burstMeter: 0,
+                burstChallenge: null,
+                isInvincible: false,
+                invincibilityEndFrame: 0,
                 
                 //raw per-tick network input reception queue - drained every
                 //tick regardless of legality (see processInput/gameTick).
@@ -222,7 +239,7 @@ const initializeGameState = (roomId, playerData, mapId)=>{
     gameState.attackHandler = new AttackHandler();
 
     gameStates.set(roomId, gameState);
-    console.log(`[GameState] Initialized game state for room ${roomId}`);
+    debugLog(`[GameState] Initialized game state for room ${roomId}`);
     
     return gameState;
 };
@@ -275,8 +292,32 @@ const processInput = (roomId, socketId, input)=>{
     player.inputBuffer.push(validatedInput);
     
     //keep buffer size limited
+    //
+    // NOTE (found live-testing the item-11 frame-data pass): this raw
+    // buffer is a network-jitter queue - it only gets drained into
+    // moveInputs/otherInputs once per tick, and that drain is skipped
+    // entirely while the player is frozen (hitstop - see gameTick's
+    // isFrozen early-return). Since the client sends a 'move' input every
+    // single tick unconditionally (see the note on applyMovement above),
+    // and hitstop freezes for HITSTOP_DURATION_FRAMES=12 ticks on every
+    // landed hit, a hitstop freeze reliably fills this buffer past its cap
+    // before it can ever be drained. Blindly shift()ing index 0 on overflow
+    // meant a buffered attack/jump/dash request - queued to try to cancel
+    // into a combo follow-up the instant the freeze ended - could get
+    // silently evicted by newer 'move' spam before it was ever seen, well
+    // before the real (frame-windowed) actionBuffer/cancel-check downstream
+    // ever got a chance to run. 'move' entries are safe to drop under
+    // pressure - only the LAST one before a drain matters (see
+    // moveInputs.forEach's last-direction-wins handling) - so evict the
+    // oldest 'move' entry specifically instead, preserving whatever
+    // meaningful action request is waiting.
     if(player.inputBuffer.length > GAME_CONFIG.inputBufferSize){
-        player.inputBuffer.shift();
+        const staleMoveIndex = player.inputBuffer.findIndex(entry => entry.type === 'move');
+        if (staleMoveIndex !== -1) {
+            player.inputBuffer.splice(staleMoveIndex, 1);
+        } else {
+            player.inputBuffer.shift();
+        }
     }
     
     player.lastInputTime = validatedInput.timestamp;
@@ -467,7 +508,7 @@ const applyDash = (player, currentFrame) => {
     player.dashTimer = GAME_CONFIG.dash.durationFrames;
     player.dashCooldownTimer = GAME_CONFIG.dash.cooldownFrames;
     
-    console.log(`[GameState] Player ${player.socketId} dashed!`);
+    debugLog(`[GameState] Player ${player.socketId} dashed!`);
 
     return { success: true };
 };
@@ -477,13 +518,13 @@ const applyBlock = (player, activate) => {
         if(!player.isBlocking && stateMachine.canStartBlock(player.combatState)){
             player.isBlocking = true;
             player.blockActivatedFrame = player.combatStateEnteredFrame; // approximate, block isn't a combatState itself
-            console.log(`[GameState] Player ${player.socketId} started blocking`);
+            debugLog(`[GameState] Player ${player.socketId} started blocking`);
         }
     } 
     else {
         if(player.isBlocking){
             player.isBlocking = false;
-            console.log(`[GameState] Player ${player.socketId} stopped blocking`);
+            debugLog(`[GameState] Player ${player.socketId} stopped blocking`);
         }
     }
 };
@@ -497,7 +538,21 @@ const applyBlock = (player, activate) => {
 // every tick already) and block (a hold-state, not a one-shot commit) are
 // NOT buffered - only jump/attack/dash, which are the ones gated by
 // stateMachine's canPerformAction.
-const ACTION_BUFFER_WINDOW_FRAMES = 5; // spec calls for a 4-6 frame window
+//
+// Widened from the spec's literal 4-6 frame suggestion (~67-100ms) to 15
+// frames (250ms). Every combo-timing pass this session (items 4-7, the
+// attack refactor) was verified against synchronous, zero-latency
+// processInput() calls timed exactly against server tick counts - that
+// validated the SERVER-side windows are internally consistent, but never
+// exercised what actually determines real playability: a real input has to
+// survive round-trip network latency (40-100ms+ even on a good connection)
+// PLUS normal human input timing on top of that, before it ever reaches
+// this buffer. 5 frames (83ms) is real-world unworkable - it's smaller
+// than a single typical round trip, meaning a perfectly-timed local press
+// could easily already be stale by the time the server sees it. 15 frames
+// gives real headroom for both without materially changing the buffer's
+// job (still just "retry until legal or stale").
+const ACTION_BUFFER_WINDOW_FRAMES = 15;
 
 const addToInputBuffer = (player, input, currentFrame) => {
     player.actionBuffer.push({ input, bufferedFrame: currentFrame });
@@ -548,6 +603,24 @@ const consumeOldestValidInput = (gameState, player, currentFrame) => {
         }
     }
 
+    // Combo breaker / burst (build-order item 7): a 'jump' input is always
+    // a CONFIRM press now - the challenge arms itself the instant hitstun
+    // begins (see applyHit in attackSystem.js), so there's no "start"
+    // input to also intercept anymore. Only relevant while a challenge is
+    // pending; jumping is otherwise illegal while stunned (canPerformAction
+    // rejects it below) and this intentionally doesn't touch that case -
+    // it just resolves whatever challenge is waiting, including after
+    // hitstun has since ended naturally (see handleBurstInput's comment).
+    if (oldest.input.type === 'jump' && player.burstChallenge) {
+        if (handleBurstInput(gameState, player, currentFrame)) {
+            player.actionBuffer.shift();
+            return;
+        }
+        // not eligible (no meter, no active challenge) - falls through to
+        // the normal jump-while-stunned handling below, which correctly
+        // rejects it via canPerformAction
+    }
+
     if (!canPerformAction(player)) {
         return;
     }
@@ -565,9 +638,9 @@ const consumeOldestValidInput = (gameState, player, currentFrame) => {
             const result = gameState.attackHandler.initiateAttack(gameState, player, input.ability);
             const bufferedFor = currentFrame - bufferedFrame;
             if (result.success) {
-                console.log(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
+                debugLog(`[GameState] ${player.socketId} started ${input.ability}${bufferedFor > 0 ? ` (buffered ${bufferedFor}f)` : ''}`);
             } else {
-                console.log(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
+                debugLog(`[GameState] Buffered attack ${input.ability} failed: ${result.reason}`);
             }
             break;
         }
@@ -682,7 +755,23 @@ const gameTick = (roomId, io)=>{
             // counter's one and only reset trigger now, replacing the old
             // attacker-side whiff/time-window reset.
             resetComboCount(player);
-            console.log(`[GameState] ${player.socketId} stun ended`);
+            debugLog(`[GameState] ${player.socketId} stun ended`);
+        }
+
+        // Combo breaker invincibility expiry (build-order item 7) - the
+        // brief safety window triggerComboBreaker grants on a successful
+        // burst (see attackSystem.js).
+        if (player.isInvincible && currentFrame >= player.invincibilityEndFrame) {
+            player.isInvincible = false;
+        }
+
+        // Combo breaker challenge timeout (build-order item 7) - if no
+        // confirm input arrives in time, the challenge just lapses. No
+        // meter cost here - only an actual mistimed confirm attempt
+        // (handled in triggerComboBreaker) spends the resource; pure
+        // inaction shouldn't cost the same as a miss.
+        if (player.burstChallenge && (currentFrame - player.burstChallenge.startFrame) > BURST_CHALLENGE_DURATION_FRAMES) {
+            player.burstChallenge = null;
         }
 
         if(player.dashTimer > 0){
@@ -854,6 +943,7 @@ const gameTick = (roomId, io)=>{
                     state: p.state, // 'victory' or 'defeated'
                     cooldowns: msCooldowns(p.cooldowns),
                     combo: p.comboCount,
+                    burstMeter: p.burstMeter,
                     lastProcessedSeq: p.lastProcessedSeq ?? -1
                 })),
                 timeRemaining: gameState.timeRemaining
@@ -874,7 +964,7 @@ const gameTick = (roomId, io)=>{
                 reason: matchEndCheck.reason
             });
             
-            console.log(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
+            debugLog(`[GameState] Match ended in room ${roomId}. Winner: ${matchEndCheck.winner || 'Draw'}`);
             
             // Don't delete game state immediately - keep for rematch
             // gameStates.delete(roomId);
@@ -900,11 +990,11 @@ const gameTick = (roomId, io)=>{
 //main server side game loop
 const startGameLoop = (roomId, io)=>{
     if(gameLoopIntervals.has(roomId)){
-        console.warn(`[GameState] Game loop already running for room ${roomId}`);
+        debugWarn(`[GameState] Game loop already running for room ${roomId}`);
         return;
     }
     
-    console.log(`[GameState] Starting game loop for room ${roomId}`);
+    debugLog(`[GameState] Starting game loop for room ${roomId}`);
     
     const intervalId = setInterval(()=>{
         gameTick(roomId, io);
@@ -918,7 +1008,7 @@ const stopGameLoop = (roomId)=>{
     if(gameLoopIntervals.has(roomId)){
         clearInterval(gameLoopIntervals.get(roomId));
         gameLoopIntervals.delete(roomId);
-        console.log(`[GameState] Stopped game loop for room ${roomId}`);
+        debugLog(`[GameState] Stopped game loop for room ${roomId}`);
     }
 };
 
@@ -956,7 +1046,7 @@ const endMatch = (roomId, io, winner = null)=>{
         }))
     });
     
-    console.log(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
+    debugLog(`[GameState] Match ended in room ${roomId}, winner: ${winner.socketId}`);
     
     setTimeout(()=>{
         deleteGameState(roomId);
@@ -1015,6 +1105,10 @@ const getClientGameState = (gameState)=>{
             state: p.state || 'active', // FIXED: Include state for animations
             cooldowns: msCooldowns(p.cooldowns),
             combo: p.comboCount,
+            // build-order item 7 - not yet consumed by any client UI, same
+            // situation as isFrozen above: exposed now so that work has the
+            // data to key off when it lands.
+            burstMeter: p.burstMeter,
             lastProcessedSeq: p.lastProcessedSeq ?? -1
         })),
         projectiles: gameState.projectiles,
@@ -1026,7 +1120,7 @@ const getClientGameState = (gameState)=>{
 const deleteGameState = (roomId)=>{
     stopGameLoop(roomId);
     gameStates.delete(roomId);
-    console.log(`[GameState] Deleted game state for room ${roomId}`);
+    debugLog(`[GameState] Deleted game state for room ${roomId}`);
 };
 
-module.exports = { GAME_CONFIG, initializeGameState, getGameState, processInput, startGameLoop, stopGameLoop, endMatch, deleteGameState, getClientGameState };
+module.exports = { GAME_CONFIG, initializeGameState, getGameState, processInput, startGameLoop, stopGameLoop, endMatch, deleteGameState, getClientGameState, gameTick };
