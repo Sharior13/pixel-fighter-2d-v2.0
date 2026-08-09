@@ -1,3 +1,12 @@
+// Must run before any other require in this file - debug.js (pulled in
+// transitively via socketHandler.js below) and the port/CORS reads further
+// down all read process.env once, at module-load time, not on every use. If
+// .env loads after those, they'd permanently capture "unset" regardless of
+// what the file says. Render (and most hosts) inject real environment
+// variables directly, so this is a no-op there either way - it only matters
+// for local dev, where nothing else in this codebase loads .env.
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { createServer} = require('node:http');
