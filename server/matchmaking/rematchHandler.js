@@ -1,6 +1,6 @@
 const { deleteGameState } = require('../core/gameState.js');
 const { createMatch, getMatch, startCharacterSelectTimeout, deleteMatch } = require('./matchManager.js');
-const { beginLoadingForRoom, randomBetween } = require('./matchMaking.js');
+const { beginLoadingForRoom, randomBetween, scheduleBotCharacterSelection } = require('./matchMaking.js');
 const { debugLog } = require("../core/debug.js");
 
 const rematchRequests = new Map(); // roomId -> Set of socket IDs who want rematch
@@ -35,6 +35,16 @@ const proceedWithRematch = (match, io) => {
     // Create new match with same players
     const players = match.players.map(p => p.socket);
     const newMatch = createMatch(roomId, players);
+
+    // createMatch alone doesn't make a bot pick anything - createBotMatch
+    // normally kicks that off right after the FIRST match is created (see
+    // matchMaking.js), but a rematch's match object is fresh, so without
+    // this the bot just sits in CHARACTER_SELECT until the blunt
+    // charSelectTimeout fallback eventually force-assigns it something.
+    const botPlayer = newMatch.players.find(p => p.isBot);
+    if (botPlayer) {
+        scheduleBotCharacterSelection(newMatch, botPlayer.socketId);
+    }
 
     // Notify all players that rematch is accepted
     io.to(roomId).emit("rematchAccepted", {

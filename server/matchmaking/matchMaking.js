@@ -20,7 +20,25 @@ const botFallbackTimers = new Map(); // socket.id -> timeoutId
 // attached to a player). Purely cosmetic - has no effect on behavior.
 const BOT_USERNAMES = [
     "Shadow99", "NovaStrike", "Kairo_", "xBlazex", "RuneWalker", "VexTide",
-    "OnyxFang", "GrimEcho", "Ryder.exe", "PhantomV", "Stormbyte", "Kestrel7"
+    "OnyxFang", "GrimEcho", "Ryder.exe", "PhantomV", "Stormbyte", "Kestrel7",
+    "Lunaris", "Draxion", "ZephyrX", "IronClaw88", "NyxRiven", "CobaltFury",
+    "Voidrunner", "PixelReaper", "Fenrix_", "AshVortex", "QuantumJay",
+    "SableWolf", "TerraNova7", "CrimsonHex", "GhostWire", "Kryptic",
+    "SolaraBlade", "MythrilFox", "Zerath0s", "BlitzKrane", "RogueSignal",
+    "EchoDrift", "ViperNox", "Talon_X", "Wraithbyte", "NeonSamurai",
+    "Hollowpoint", "SkyeRunner", "ObsidianV", "FrostbiteX", "Cindermoth",
+    "Duskblade", "AzureFang", "Riftwalker", "Nebulon", "GraveShift",
+    "PyreWolf", "Static.exe", "Ashborn99", "Velk0r", "Nightshade7",
+    "Ironvale", "Cryostorm", "MoltenAsh", "Verdant_X", "Xanthos",
+    "Bladewind", "Umbraflux", "Thornquist", "Glitchborn", "Sablewing",
+    "Duneshade", "IonPulse", "Marrowfang", "Skarn_", "Voltessa",
+    "Nullstrike", "Hexbane", "Corvidae", "Waningstar", "Bramblewick",
+    "Aetherfall", "Grimshade", "Cyanwolf", "Doomspire", "Kestrix",
+    "Palewalker", "Slatewing", "Nimbusrend", "Cravenrot", "Vexillon",
+    "Ashenblade", "Rimeclaw", "Torvusk", "Cindershade", "Wyrmfell",
+    "Duskrunner", "Featherbyte", "Grimtide", "Solstice_X", "Nightfarer",
+    "Copperfang", "Ravensbyte", "Emberlynx", "Frostvane", "Duskhollow",
+    "Ironquill", "Vantablack7",
 ];
 
 const initMatchmaking = (io) => {
@@ -435,4 +453,4 @@ const generateRoomCode = (length = 5)=>{
     return code;
 };
 
-module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight, randomBetween };
+module.exports = { initMatchmaking, addToQueue, removeFromQueue, createCustomRoom, joinCustomRoom, beginLoadingForRoom, actuallyBeginFight, randomBetween, scheduleBotCharacterSelection };
