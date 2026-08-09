@@ -162,6 +162,56 @@ const PERSONALITIES = {
         tooCloseBackoffChance: 0.35,
         abilityWeights: { basic: 4, attack1: 3, attack2: 2, special: 2, ultimate: 1 },
     },
+
+    // All-in and proud of it: presses even harder than rushdown, barely
+    // bothers to block, and never backs off even at critical health - a
+    // rushdown that never learned the "trade hits" part has a downside.
+    // Leans on the biggest hits available rather than the fast/cheap stuff,
+    // since it's not planning on surviving long enough to need cooldowns
+    // back anyway.
+    berserker: {
+        spacingBiasPx: -35,
+        tooCloseBackoffChance: 0,
+        blockChance: 0.25,
+        retreatHealthRatio: 0.05,
+        retreatChance: 0.1,
+        abilityWeights: { basic: 2, attack1: 3, attack2: 4, special: 4, ultimate: 4 },
+        dashMixupChance: 0.35,
+        jumpMixupChance: 0.03,
+    },
+
+    // Mobile and hard to read: leans heavily on jump/dash mixups instead of
+    // committing to one spacing, favors quick-to-throw options over the slow
+    // ultimate (staying mobile matters more than one big hit), and blocks at
+    // a moderate rate rather than turtle's near-total commitment to it.
+    trickster: {
+        spacingBiasPx: 5,
+        jumpMixupChance: 0.22,
+        dashMixupChance: 0.32,
+        tooCloseBackoffChance: 0.15,
+        blockChance: 0.6,
+        retreatHealthRatio: 0.25,
+        retreatChance: 0.5,
+        abilityWeights: { basic: 4, attack1: 4, attack2: 3, special: 3, ultimate: 1 },
+    },
+
+    // Turtle's mirror image: blocks just as much, but stands its ground and
+    // punishes instead of retreating and hesitating. Full follow-through on
+    // openings (like base) rather than turtle's reduced 0.6, and barely
+    // backs off from close range since it trusts its own block. Leans on
+    // fast punish options over the slow ultimate, so the counter-hit
+    // actually lands before the window closes.
+    counter: {
+        spacingBiasPx: 10,
+        attackFollowThrough: 1.0,
+        blockChance: 0.97,
+        retreatHealthRatio: 0.15,
+        retreatChance: 0.2,
+        tooCloseBackoffChance: 0.05,
+        abilityWeights: { basic: 4, attack1: 5, attack2: 3, special: 2, ultimate: 2 },
+        dashMixupChance: 0.1,
+        jumpMixupChance: 0.05,
+    },
 };
 
 // Merges a named personality's overrides onto BASE_DIFFICULTY. Falls back
@@ -471,9 +521,10 @@ let retreatCommittedUntil = 0;
 // is called with each batch of tagged decisions instead of this module
 // emitting them anywhere itself - localMatch.js passes a function that
 // feeds them straight into the local sim's processInput().
-// `personality` is a key into PERSONALITIES (e.g. "rushdown", "zoner",
-// "turtle") - what the bot tries to do. Defaults to "random" (a fresh coin
-// flip every match); pass "allrounder" explicitly for the plain base.
+// `personality` is a key into PERSONALITIES (see that table above for the
+// full list and what each one does) - what the bot tries to do. Defaults to
+// "random" (a fresh coin flip every match, evenly across all of them); pass
+// "allrounder" explicitly for the plain base.
 // `skill` is a key into SKILL_LEVELS ("easy"/"normal"/"hard") - how well it
 // executes that plan. Also defaults to "random". Both axes are independent:
 // e.g. ("rushdown", "easy") still presses forward and leans on fast
