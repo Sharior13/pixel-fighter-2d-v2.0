@@ -5,6 +5,13 @@ const hitboxSystem = require('./hitboxSystem.js');
 // the client's own debug.js instead of a copy of this one - see that file's
 // comment for why.
 const { debugLog } = require('./debug.js');
+// Single source of truth for all character data (stats, move balance
+// numbers, frame-timing modifiers, sprite config) - see server/data/characters.js.
+// This file used to define its own ATTACK_TIER_FRAMES/CHARACTER_SPEED_MOD/
+// ATTACK_CONFIG_MS tables; those are now authored data that lives there
+// instead, and this file only consumes them to build the runtime
+// ATTACK_CONFIG below.
+const { CHARACTERS, MOVE_TIER_FRAMES, MOVE_ANIMATION_MAP } = require('../data/characters.js');
 
 // ── frame conversion ─────────────────────────────────────────────────
 // Step 0 of the refactor plan: every durational value becomes frame-counted
@@ -26,13 +33,14 @@ const msToFrames = (ms) => Math.max(1, Math.round(ms / FRAME_MS));
 // activeEndFrame are now DERIVED from these three, not the other way
 // around (see the ATTACK_CONFIG build loop below).
 //
-// Authored as tier + per-character speed modifier rather than 60 hand-typed
-// numbers - this is normal practice for systematic frame data and keeps
-// the actual design decision (how fast is this character, how weighty is
-// this move) legible instead of buried in arithmetic, while eliminating
+// Authored as tier (MOVE_TIER_FRAMES) + per-character speed modifier
+// (CHARACTERS[id].frameModifier) rather than 60 hand-typed numbers - both
+// tables now live in server/data/characters.js as the single source of
+// truth; this function just combines them. Keeping the actual design
+// decision (how fast is this character, how weighty is this move) legible
+// in one data file instead of buried in arithmetic here also eliminates
 // the risk of a typo silently reopening the item-5/6 combo-margin problem
-// in one specific move. The real per-move authoring is IN these two
-// tables, not the loop that combines them.
+// in one specific move.
 //
 // Combo-margin check (the thing that was broken before this pass): with
 // BASE_HITSTUN_FRAMES = 18 on a first hit, and hitstun only shrinking from
@@ -40,30 +48,9 @@ const msToFrames = (ms) => Math.max(1, Math.round(ms / FRAME_MS));
 // high comboCount - so the worst case (a hit landing the instant active
 // frames open) still leaves the attacker cancel-eligible several frames
 // before the defender recovers, for every move, not just a lucky late hit.
-const ATTACK_TIER_FRAMES = {
-    //           startup  active  recovery
-    attack1:    { startup: 4,  active: 3, recovery: 8  }, // light poke - fast, safe combo starter
-    attack2:    { startup: 6,  active: 4, recovery: 10 }, // medium - second hit in a chain
-    basic:      { startup: 8,  active: 5, recovery: 14 }, // heavy normal - usually a chain-ender
-    special:    { startup: 10, active: 6, recovery: 18 }, // meter move - big commitment
-    ultimate:   { startup: 14, active: 8, recovery: 20 }  // true finisher, not meant to chain further
-};
-
-// startup/recovery deltas per character, reflecting the same relative
-// weight/speed already implied by their existing damage and range values
-// (Zoro's wide sword arcs vs. Ichigo/Rukia's quick precise strikes, which
-// already shared identical old `duration` numbers move-for-move - that
-// parity is preserved here by giving them the same modifier).
-const CHARACTER_SPEED_MOD = {
-    luffy:  { startup: 0,  recovery: 0  },
-    zoro:   { startup: 1,  recovery: 2  }, // heavier, more committed swings
-    ichigo: { startup: -1, recovery: -2 }, // fast zanpakuto slashes
-    rukia:  { startup: -1, recovery: -2 }  // precise, swift ice strikes - same tempo as Ichigo's old data
-};
-
 function attackTiming(moveId, characterId) {
-    const tier = ATTACK_TIER_FRAMES[moveId];
-    const mod = CHARACTER_SPEED_MOD[characterId];
+    const tier = MOVE_TIER_FRAMES[moveId];
+    const mod = CHARACTERS[characterId].frameModifier;
     return {
         startupFrames: Math.max(2, tier.startup + mod.startup),
         activeFrames: tier.active, // kept uniform across characters - this is the number the combo-margin check above depends on, not a place for per-character flavor
@@ -71,263 +58,25 @@ function attackTiming(moveId, characterId) {
     };
 }
 
-const ATTACK_CONFIG_MS = {
-    luffy: {
-        attack1: {
-            damage: 42,
-            cooldown: 650,
-            knockback: { x: 8, y: 0 },
-            animation: 'attack1',
-            range: 60, // Short range punch
-            hitboxWidth: 40,
-            hitboxHeight: 50,
-            attackLevel: 'high',
-            meterCost: 0,
-            meterGain: 6
-        },
-        attack2: {
-            damage: 50,
-            cooldown: 850,
-            knockback: { x: 12, y: 0 },
-            animation: 'attack2',
-            range: 80, // Medium range kick
-            hitboxWidth: 50,
-            hitboxHeight: 60,
-            attackLevel: 'low',
-            meterCost: 0,
-            meterGain: 8
-        },
-        basic: {
-            damage: 32,
-            cooldown: 1150,
-            knockback: { x: 10, y: 0 },
-            animation: 'attack_basic',
-            range: 100, // Extended punch
-            hitboxWidth: 60,
-            hitboxHeight: 70,
-            attackLevel: 'mid',
-            meterCost: 0,
-            meterGain: 10
-        },
-        special: {
-            damage: 70,
-            cooldown: 10000,
-            knockback: { x: 20, y: 0 },
-            animation: 'attack_special',
-            range: 150, // Gomu Gomu extended attack
-            hitboxWidth: 80,
-            hitboxHeight: 80,
-            attackLevel: 'mid',
-            meterCost: 30,
-            meterGain: 5
-        },
-        ultimate: {
-            damage: 150,
-            cooldown: 30000,
-            knockback: { x: 40, y: 0 },
-            animation: 'attack_ultimate',
-            dashDistance: 0,
-            range: 200, // Gear Fourth range
-            hitboxWidth: 100,
-            hitboxHeight: 100,
-            attackLevel: 'mid',
-            meterCost: 100,
-            meterGain: 0
-        }
-    },
-
-    zoro: {
-        attack1: {
-            damage: 37,
-            cooldown: 500,
-            knockback: { x: 10, y: 0 },
-            animation: 'attack1',
-            range: 70, // Sword slash
-            hitboxWidth: 50,
-            hitboxHeight: 60,
-            attackLevel: 'high',
-            meterCost: 0,
-            meterGain: 6
-        },
-        attack2: {
-            damage: 45,
-            cooldown: 650,
-            knockback: { x: 8, y: 0 },
-            animation: 'attack2',
-            range: 90, // Wide sword arc
-            hitboxWidth: 60,
-            hitboxHeight: 70,
-            attackLevel: 'low',
-            meterCost: 0,
-            meterGain: 8
-        },
-        basic: {
-            damage: 35,
-            cooldown: 1100,
-            knockback: { x: 12, y: 0 },
-            animation: 'attack_basic',
-            range: 110, // Three sword style
-            hitboxWidth: 70,
-            hitboxHeight: 80,
-            attackLevel: 'mid',
-            meterCost: 0,
-            meterGain: 10
-        },
-        special: {
-            damage: 87,
-            cooldown: 10000,
-            knockback: { x: 25, y: 0 },
-            animation: 'attack_special',
-            range: 160, // Oni Giri
-            hitboxWidth: 90,
-            hitboxHeight: 90,
-            attackLevel: 'mid',
-            meterCost: 30,
-            meterGain: 5
-        },
-        ultimate: {
-            damage: 195,
-            cooldown: 30000,
-            knockback: { x: 50, y: 0 },
-            animation: 'attack_ultimate',
-            dashDistance: 500,
-            range: 250, // Asura attack
-            hitboxWidth: 120,
-            hitboxHeight: 120,
-            attackLevel: 'mid',
-            meterCost: 100,
-            meterGain: 0
-        }
-    },
-
-    ichigo: {
-        attack1: {
-            damage: 35,
-            cooldown: 430,
-            knockback: { x: 8, y: 0 },
-            animation: 'attack1',
-            range: 75, // Zanpakuto slash
-            hitboxWidth: 45,
-            hitboxHeight: 55,
-            attackLevel: 'high',
-            meterCost: 0,
-            meterGain: 6
-        },
-        attack2: {
-            damage: 50,
-            cooldown: 600,
-            knockback: { x: 10, y: 0 },
-            animation: 'attack2',
-            range: 95, // Wide slash
-            hitboxWidth: 55,
-            hitboxHeight: 65,
-            attackLevel: 'low',
-            meterCost: 0,
-            meterGain: 8
-        },
-        basic: {
-            damage: 25,
-            cooldown: 1150,
-            knockback: { x: 14, y: 0 },
-            animation: 'attack_basic',
-            range: 115, // Bankai slash
-            hitboxWidth: 65,
-            hitboxHeight: 75,
-            attackLevel: 'mid',
-            meterCost: 0,
-            meterGain: 10
-        },
-        special: {
-            damage: 95,
-            cooldown: 15000,
-            knockback: { x: 28, y: 0 },
-            animation: 'attack_special',
-            range: 150, // Getsuga Tensho
-            hitboxWidth: 85,
-            hitboxHeight: 85,
-            attackLevel: 'mid',
-            meterCost: 30,
-            meterGain: 5
-        },
-        ultimate: {
-            damage: 200,
-            cooldown: 35000,
-            knockback: { x: 55, y: 0 },
-            animation: 'attack_ultimate',
-            dashDistance: 400,
-            range: 220, // Final Getsuga Tensho
-            hitboxWidth: 115,
-            hitboxHeight: 115,
-            attackLevel: 'mid',
-            meterCost: 100,
-            meterGain: 0
-        }
-    },
-
-    rukia: {
-        attack1: {
-            damage: 38,
-            cooldown: 430,
-            knockback: { x: 8, y: 0 },
-            animation: 'attack1',
-            range: 58, // Ice sword slash
-            hitboxWidth: 38,
-            hitboxHeight: 48,
-            attackLevel: 'high',
-            meterCost: 0,
-            meterGain: 6
-        },
-        attack2: {
-            damage: 42,
-            cooldown: 600,
-            knockback: { x: 10, y: 0 },
-            animation: 'attack2',
-            range: 68, // Ice thrust
-            hitboxWidth: 48,
-            hitboxHeight: 58,
-            attackLevel: 'low',
-            meterCost: 0,
-            meterGain: 8
-        },
-        basic: {
-            damage: 28,
-            cooldown: 1150,
-            knockback: { x: 14, y: 0 },
-            animation: 'attack_basic',
-            range: 88, // Some no mai
-            hitboxWidth: 58,
-            hitboxHeight: 68,
-            attackLevel: 'mid',
-            meterCost: 0,
-            meterGain: 10
-        },
-        special: {
-            damage: 90,
-            cooldown: 15000,
-            knockback: { x: 28, y: 0 },
-            animation: 'attack_special',
-            range: 125, // Ice wave
-            hitboxWidth: 72,
-            hitboxHeight: 72,
-            attackLevel: 'mid',
-            meterCost: 30,
-            meterGain: 5
-        },
-        ultimate: {
-            damage: 220,
-            cooldown: 35000,
-            knockback: { x: 55, y: 0 },
-            animation: 'attack_ultimate',
-            dashDistance: 400,
-            range: 170, // Hakka no Togame
-            hitboxWidth: 98,
-            hitboxHeight: 98,
-            attackLevel: 'mid',
-            meterCost: 100,
-            meterGain: 0
-        }
+// ── Per-move balance data (damage/cooldown/knockback/range/hitbox/etc.) ──
+// This USED to be a large hand-maintained table duplicated here, one block
+// per character. It now lives in server/data/characters.js
+// (CHARACTERS[id].moves) as part of the single source of truth, and is
+// assembled into the same {characterId: {moveId: {...ms fields}}} shape
+// this file has always built ATTACK_CONFIG from - so everything below this
+// point is unchanged. `animation` (previously hand-typed per move) is now
+// derived from the shared MOVE_ANIMATION_MAP, since every character maps
+// move slots to sheet names identically.
+const ATTACK_CONFIG_MS = {};
+for (const [characterId, character] of Object.entries(CHARACTERS)) {
+    ATTACK_CONFIG_MS[characterId] = {};
+    for (const [moveId, moveData] of Object.entries(character.moves)) {
+        ATTACK_CONFIG_MS[characterId][moveId] = {
+            ...moveData,
+            animation: MOVE_ANIMATION_MAP[moveId]
+        };
     }
-};
+}
 
 // ── Cancel Windows (build-order item 3 / spec section 3) ──────────────
 // A cancel lets a player cut a move's RECOVERY short by chaining directly
@@ -749,10 +498,23 @@ class AttackHandler {
             return { success: false, reason: 'invalid_character' };
         }
 
-        const attackConfig = characterAttacks[attackType];
-        if (!attackConfig) {
+        // hasOwnProperty guard, not just `characterAttacks[attackType]` -
+        // attackType is client-controlled (input.ability, forwarded here
+        // unmodified from processInput() in gameState.js). A forged
+        // {type:'attack', ability: '__proto__'} (or 'constructor',
+        // 'toString', etc.) would otherwise resolve through the prototype
+        // chain to a real object - Object.prototype itself - which is
+        // truthy and so passes the `!attackConfig` check below despite not
+        // being a real move. Every field it's actually used for downstream
+        // (startupFrames, damage, range...) would then read as undefined,
+        // producing NaN timing/state that could desync or wedge that
+        // player's combat state rather than cleanly rejecting as
+        // 'invalid_attack' like any other bogus attackType does.
+        if (!Object.prototype.hasOwnProperty.call(characterAttacks, attackType)) {
             return { success: false, reason: 'invalid_attack' };
         }
+
+        const attackConfig = characterAttacks[attackType];
 
         // Check cooldown (frame count now, not ms)
         if (player.cooldowns[attackType] > 0) {

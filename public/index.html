@@ -39,11 +39,6 @@
          wait for both players to confirm readiness (see public/ui/loadingScreen.js) -->
     <div id="loading-screen" class="hidden"></div>
 
-    <!-- small, low-opacity round-trip latency readout, bottom-right corner
-         (see public/ui/pingDisplay.js). Hidden by default - only shown while
-         matchmaking/in a match (see startPingMonitor/stopPingMonitor). -->
-    <div id="ping-display" class="hidden">--ms</div>
-
     <!-- character selection ui -->
 
     <div id="character-select" class="character-container hidden">
@@ -104,11 +99,6 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/rukia/rukia-icon.png" alt="Player 1" class="character-image">
         </div>
         <div class="character-name left">RUKIA</div>
-        <div class="dash-bar-wrapper left">
-            <div class="dash-bar-bg" id="dash-bg-p1">
-                <div class="dash-bar-fill" id="dash-p1"></div>
-            </div>
-        </div>
 
         <div class="bars-container left">
             <div class="health-bar-wrapper">
@@ -129,11 +119,6 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/naruto/naruto-icon.png" alt="Player 2" class="character-image">
         </div>
         <div class="character-name right">Naruto</div>
-        <div class="dash-bar-wrapper right">
-            <div class="dash-bar-bg" id="dash-bg-p2">
-                <div class="dash-bar-fill" id="dash-p2"></div>
-            </div>
-        </div>
 
         <div class="bars-container right">
             <div class="health-bar-wrapper">
@@ -147,6 +132,27 @@
                 </div>
             </div>
             <div class="combo-display hidden" id="combo-p2"></div>
+        </div>
+
+        <!-- Combo breaker / burst precision challenge (build-order item 7).
+             No persistent meter bar - see battleUI.js's updateBurstChallenge,
+             which only tracks the value internally for its own sake
+             (nothing renders it). This overlay is hidden (no 'active' class)
+             until the LOCAL player's own burstChallengeActive flips true -
+             only the person actually being combo'd sees it, never their
+             opponent. On resolution it swaps to a pass/fail result message
+             (see .result class + #burst-challenge-result) instead of just
+             disappearing, then hides after a beat. -->
+        <div class="burst-challenge-overlay" id="burst-challenge-overlay">
+            <div class="burst-challenge-prompt" id="burst-challenge-prompt">
+                JUMP TO BURST!
+                <span class="burst-challenge-key-hint">W / SPACE</span>
+            </div>
+            <div class="burst-challenge-track" id="burst-challenge-track">
+                <div class="burst-challenge-target-zone" id="burst-challenge-target-zone"></div>
+                <div class="burst-challenge-marker" id="burst-challenge-marker"></div>
+            </div>
+            <div class="burst-challenge-result" id="burst-challenge-result"></div>
         </div>
         
         <!-- Timer -->
@@ -176,7 +182,7 @@
                 
                     <div class="row">
                         <span>Room Id</span>
-                        <input id="room-id-input" name="roomId" placeholder="Join" class="inp" required>
+                        <input placeholder="Join" class="inp" required>
                     </div><br>
                 
                     <button class="btn" id="room-join-btn">Join</button>
@@ -187,7 +193,7 @@
                 
                     <div class="row">
                         <span>Room Name</span>
-                        <input id="room-name-input" name="roomName" placeholder="Enter Name" class="inp">
+                        <input placeholder="Enter Name" class="inp">
                     </div><br>
                 
                     <button class="btn" id="room-create-btn">Create</button>
@@ -310,12 +316,11 @@
             <!-- Profile Info -->
             <div class="profile-info">
 
-                <input id="username-input" name="username" class="username username-input"
+                <input class="username username-input"
                     type="text" 
                     placeholder="Enter username"
                     value="Player"
                     maxlength="12"
-                    autocomplete="username"
                 >
 
             </div>
@@ -334,19 +339,6 @@
     <div id="rotate-overlay">
         <div class="rotate-icon">⟳</div>
         <p>Rotate your device to landscape<br>for the best experience</p>
-    </div>
-
-    <!-- One-time-per-session full screen prompt (see core/fullscreenGate.js).
-         Desktop/laptop: dismissible via the X, plus a button to go full screen.
-         Mobile/tablet: mandatory (no X) - reuses the same dark overlay + rotate
-         icon treatment as #rotate-overlay above, and also requires landscape
-         orientation before it will let the player continue. -->
-    <div id="fullscreen-gate">
-        <button class="fullscreen-gate-close" id="fullscreen-gate-close" aria-label="Close">&times;</button>
-        <div class="rotate-icon hidden" id="fullscreen-gate-rotate-icon">⟳</div>
-        <p id="fullscreen-gate-message">For the best experience, play in full screen.</p>
-        <p id="fullscreen-gate-rotate-message" class="hidden">Please also rotate your device to landscape.</p>
-        <button class="btn btn-small" id="fullscreen-gate-btn">Enter Full Screen</button>
     </div>
 
     <!-- on-screen touch controls (shown automatically on touch devices) -->

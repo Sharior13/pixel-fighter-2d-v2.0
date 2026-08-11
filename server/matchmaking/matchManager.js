@@ -1,5 +1,5 @@
 const { GAME_CONFIG } = require('../core/gameState.js')
-const { validateCharacter, getRandomCharacter } = require('../data/characterData.js');
+const { validateCharacter, getRandomCharacter } = require('../data/characters.js');
 const { getRandomMap } = require('../data/maps.js');
 const { debugLog } = require("../core/debug.js");
 

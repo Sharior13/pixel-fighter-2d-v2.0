@@ -1,12 +1,5 @@
 import { socket } from "../core/socket.js";
 import { ASSET_BASE_URL } from "../core/config.js";
-import { debugLog, debugWarn, debugError } from "../core/debug.js";
-import { GAME_CONFIG_CLIENT } from "../core/prediction.js";
-
-// Max dash cooldown in ms - server only sends the remaining dashCooldownTimer,
-// not the max, so we pull the true value from the same client-side config
-// prediction.js already uses to mirror the server's dash cooldown.
-const MAX_DASH_COOLDOWN_MS = GAME_CONFIG_CLIENT.dash.cooldown;
 
 class BattleUI {
     constructor() {
@@ -17,7 +10,6 @@ class BattleUI {
         // Player 1 (left) elements
         this.p1HealthBar = document.getElementById('health-p1');
         this.p1UltimateBar = document.getElementById('ultimate-p1');
-        this.p1DashBar = document.getElementById('dash-p1');
         this.p1CharacterImage = document.querySelector('.character-frame.left .character-image');
         this.p1CharacterName = document.querySelector('.character-name.left');
         this.p1ComboDisplay = document.getElementById('combo-p1');
@@ -25,16 +17,26 @@ class BattleUI {
         // Player 2 (right) elements
         this.p2HealthBar = document.getElementById('health-p2');
         this.p2UltimateBar = document.getElementById('ultimate-p2');
-        this.p2DashBar = document.getElementById('dash-p2');
         this.p2CharacterImage = document.querySelector('.character-frame.right .character-image');
         this.p2CharacterName = document.querySelector('.character-name.right');
         this.p2ComboDisplay = document.getElementById('combo-p2');
+
+        // Combo breaker precision challenge overlay (build-order item 7) -
+        // one screen-centered widget, shown only for the LOCAL player's own
+        // challenge (see updateBurstChallenge) - the opponent never sees it.
+        this.burstChallengeOverlay = document.getElementById('burst-challenge-overlay');
+        this.burstChallengeTrack = document.getElementById('burst-challenge-track');
+        this.burstChallengeTargetZone = document.getElementById('burst-challenge-target-zone');
+        this.burstChallengeMarker = document.getElementById('burst-challenge-marker');
+        this.burstChallengeResult = document.getElementById('burst-challenge-result');
+        this.burstResultTimeout = null;
         
         this.isVisible = false;
         this.currentState = null;
         this.localPlayerIndex = null; // Track which side the local player is on
         this.p1PreviousCombo = 0;
         this.p2PreviousCombo = 0;
+        this.burstChallengeWasActive = false;
     }
     
     show() {
@@ -50,11 +52,15 @@ class BattleUI {
         this.currentState = null;
         this.p1PreviousCombo = 0;
         this.p2PreviousCombo = 0;
+        this.burstChallengeWasActive = false;
+        clearTimeout(this.burstResultTimeout);
+        this.burstChallengeOverlay.classList.remove('active', 'result');
+        this.burstChallengeMarker.classList.remove('active');
     }
     
     initialize(gameState) {
         if (!gameState || !gameState.players || gameState.players.length < 2) {
-            debugError('[BattleUI] Invalid game state for initialization');
+            console.error('[BattleUI] Invalid game state for initialization');
             return;
         }
         
@@ -62,7 +68,7 @@ class BattleUI {
         const opponent = gameState.players.find(p => p.socketId !== socket.id);
         
         if (!localPlayer || !opponent) {
-            debugError('[BattleUI] Could not find players');
+            console.error('[BattleUI] Could not find players');
             return;
         }
         
@@ -97,13 +103,10 @@ class BattleUI {
         this.localPlayerIndex = localPlayer.playerIndex;
         this.p1PreviousCombo = 0;
         this.p2PreviousCombo = 0;
-
-        // Reset dash bars so a rematch doesn't briefly show the previous match's fill
-        this.updateDashBar(this.p1DashBar, MAX_DASH_COOLDOWN_MS);
-        this.updateDashBar(this.p2DashBar, MAX_DASH_COOLDOWN_MS);
+        this.burstChallengeWasActive = false;
         
         this.show();
-        debugLog('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
+        console.log('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
     }
     
     updateCharacterImage(imageElement, characterName) {
@@ -113,7 +116,7 @@ class BattleUI {
         
         // Handle image load error
         imageElement.onerror = () => {
-            debugWarn(`[BattleUI] Character image not found for ${characterName}`);
+            console.warn(`[BattleUI] Character image not found for ${characterName}`);
             // Use a simple colored div instead of placeholder URL
             imageElement.style.display = 'none';
             imageElement.parentElement.style.background = '#8B4513';
@@ -153,12 +156,16 @@ class BattleUI {
         // Update Player 1 (left side) bars
         this.updateHealthBar(this.p1HealthBar, p1.health, p1.maxHealth);
         this.updateUltimateBar(this.p1UltimateBar, p1.cooldowns?.ultimate || 0);
-        this.updateDashBar(this.p1DashBar, p1.dashCooldownTimer || 0);
         
         // Update Player 2 (right side) bars
         this.updateHealthBar(this.p2HealthBar, p2.health, p2.maxHealth);
         this.updateUltimateBar(this.p2UltimateBar, p2.cooldowns?.ultimate || 0);
-        this.updateDashBar(this.p2DashBar, p2.dashCooldownTimer || 0);
+
+        // Combo breaker precision challenge (build-order item 7) - only the
+        // LOCAL player's own challenge shows; the opponent never sees it.
+        // burstMeter itself has no persistent visual - only the challenge
+        // moment (and its pass/fail result) shows.
+        this.updateBurstChallenge(!!localPlayer.burstChallengeActive, !!localPlayer.isInvincible);
         
         // Update combo displays
         this.updateComboDisplay(this.p1ComboDisplay, p1.combo || 0, (p1.combo || 0) > this.p1PreviousCombo);
@@ -211,8 +218,14 @@ class BattleUI {
     }
     
     updateUltimateBar(barElement, ultimateCooldown) {
-        // Get max ultimate cooldown from character abilities (assume 30000ms default)
-        const maxUltimateCooldown = 30000;
+        // Max ultimate cooldown, kept in sync with ULTIMATE_COOLDOWN_CAP_MS
+        // in server/core/attackSystem.js's cooldown-policy override (moved
+        // to that value this session - was 30000, matching the OLD
+        // uncapped authored cooldown, before every special/ultimate
+        // cooldown got capped down for playability; left stale here until
+        // now, which would have made this bar read "ready" well before the
+        // real cooldown actually cleared).
+        const maxUltimateCooldown = 10000;
         
         // Calculate percentage: inverted so bar is full when cooldown is 0 (ready)
         // and empty when cooldown is at max
@@ -231,19 +244,95 @@ class BattleUI {
         }
     }
     
-    updateDashBar(barElement, dashCooldownTimer) {
-        if (!barElement) return;
+    // ── Combo Breaker / Burst UI (build-order item 7) ──────────────────
+    // Mirrors server/core/attackSystem.js's burst timing constants - kept
+    // here rather than imported, since there's no shared client/server
+    // module boundary in this project (same pattern prediction.js already
+    // uses for GAME_CONFIG_CLIENT). Keep these in sync with attackSystem.js
+    // if those values change: BURST_CHALLENGE_DURATION_FRAMES,
+    // BURST_TARGET_START_FRAME, BURST_TARGET_END_FRAME, at 60fps (16.667ms
+    // per frame).
+    static BURST_SWEEP_DURATION_MS = 333;  // 20 frames
+    static BURST_TARGET_START_PCT = 30;    // 6 frames / 20 frames
+    static BURST_TARGET_END_PCT = 70;      // 14 frames / 20 frames
+    
+    // Handles the rising/falling edge of the LOCAL player's own burst
+    // challenge. On the rising edge, positions the target zone, restarts
+    // the marker sweep, and reveals the overlay; on the falling edge
+    // (challenge resolved - the server doesn't send a distinct pass/fail
+    // signal, it just clears burstChallenge either way) shows a result
+    // message instead of just disappearing - `isInvincible` is the tell:
+    // a successful triggerComboBreaker sets it true in the exact same tick
+    // it clears burstChallenge, so both change together in the same
+    // snapshot. Timeout (never confirmed at all) looks identical to a
+    // mistimed press from here - isInvincible stays false either way - and
+    // both correctly show as a fail.
+    //
+    // LATENCY NOTE: this animation starts when the client FIRST OBSERVES
+    // burstChallengeActive flip true in a server snapshot, not when the
+    // challenge actually armed server-side - so it's already behind the
+    // true server timeline by the time it appears: up to ~50ms just from
+    // the broadcast interval (gameStateUpdate goes out at ~20Hz / every 3rd
+    // server tick, see render.js), plus one-way network latency on top of
+    // that, and the confirm input then takes another one-way trip back.
+    // The server's BURST_TARGET_START_FRAME/END_FRAME window was widened
+    // specifically to build in margin for a real round trip (see the note
+    // in combat-system-refactor-plan.md), so this should track closely
+    // enough to be usable, but it's a genuine simplification rather than a
+    // fully latency-compensated prediction (which would need the client
+    // predicting its OWN hit/meter state locally, matching how movement
+    // prediction already works but combat events currently don't) - worth
+    // revisiting if real-play testing shows the visual window feels
+    // meaningfully offset from when presses actually land.
+    static BURST_RESULT_DISPLAY_MS = 1200;
 
-        // Same shape as updateUltimateBar (server sends only the remaining
-        // cooldown, not the max), but here MAX_DASH_COOLDOWN_MS is the real
-        // value from prediction.js's GAME_CONFIG_CLIENT.dash.cooldown, not a guess.
-        const cooldownPercentage = (dashCooldownTimer / MAX_DASH_COOLDOWN_MS) * 100;
-        const fillPercentage = Math.max(0, Math.min(100, 100 - cooldownPercentage));
+    updateBurstChallenge(isActive, isInvincible) {
+        if (isActive && !this.burstChallengeWasActive) {
+            this.startBurstSweep();
+        } else if (!isActive && this.burstChallengeWasActive) {
+            this.showBurstResult(isInvincible);
+        }
 
-        barElement.style.width = fillPercentage + '%';
-        barElement.classList.toggle('dash-ready', fillPercentage >= 100);
+        this.burstChallengeWasActive = isActive;
     }
     
+    startBurstSweep() {
+        // Cancel any still-pending result display from a previous challenge
+        // - a fresh challenge starting always wins over an old result.
+        clearTimeout(this.burstResultTimeout);
+        this.burstChallengeOverlay.classList.remove('result');
+
+        this.burstChallengeTargetZone.style.left = BattleUI.BURST_TARGET_START_PCT + '%';
+        this.burstChallengeTargetZone.style.width = (BattleUI.BURST_TARGET_END_PCT - BattleUI.BURST_TARGET_START_PCT) + '%';
+
+        // Restart the CSS sweep animation from the beginning even if one
+        // was already mid-flight (force a reflow between removing and
+        // re-adding the class, same trick updateComboDisplay uses for its
+        // pop animation) - a new challenge starting should always sweep
+        // from 0%, never continue a stale animation.
+        this.burstChallengeMarker.style.setProperty('--burst-duration', BattleUI.BURST_SWEEP_DURATION_MS + 'ms');
+        this.burstChallengeMarker.classList.remove('active');
+        void this.burstChallengeMarker.offsetWidth;
+        this.burstChallengeMarker.classList.add('active');
+
+        this.burstChallengeOverlay.classList.add('active');
+    }
+    
+    showBurstResult(success) {
+        this.burstChallengeMarker.classList.remove('active');
+
+        this.burstChallengeResult.textContent = success ? 'Combo Breaker!' : 'Combo Breaker Failed!';
+        this.burstChallengeResult.classList.toggle('success', success);
+        this.burstChallengeResult.classList.toggle('fail', !success);
+        this.burstChallengeOverlay.classList.add('result');
+
+        clearTimeout(this.burstResultTimeout);
+        this.burstResultTimeout = setTimeout(() => {
+            this.burstChallengeOverlay.classList.remove('active', 'result');
+        }, BattleUI.BURST_RESULT_DISPLAY_MS);
+    }
+    
+
     updateTimer(timeRemaining) {
         const seconds = Math.max(0, Math.ceil(timeRemaining / 1000));
         this.timerDisplay.textContent = seconds;

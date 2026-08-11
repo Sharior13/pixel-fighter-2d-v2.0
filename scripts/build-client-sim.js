@@ -35,7 +35,7 @@ const FILES = [
     ["server/core/attackSystem.js", "public/core/sim/core/attackSystem.js"],
     ["server/core/stateMachine.js", "public/core/sim/core/stateMachine.js"],
     ["server/core/hitboxSystem.js", "public/core/sim/core/hitboxSystem.js"],
-    ["server/data/characterData.js", "public/core/sim/data/characterData.js"],
+    ["server/data/characters.js", "public/core/sim/data/characters.js"],
     ["server/data/maps.js", "public/core/sim/data/maps.js"],
 ];
 

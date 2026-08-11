@@ -1,4 +1,4 @@
-const { getCharacterData } = require('../data/characterData.js');
+const { getCharacterData } = require('../data/characters.js');
 const { getMapData } = require('../data/maps.js');
 const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
@@ -281,7 +281,22 @@ const processInput = (roomId, socketId, input)=>{
     //validate input
     const validatedInput = {
         type: input.type,
-        direction: input.direction || 0,
+        // Math.sign() clamps to -1/0/1 regardless of what a client sends -
+        // the real client (public/core/input.js) only ever produces one of
+        // those three values, so this is a no-op for legitimate play. It
+        // closes a speed-hack/teleport vector: without this, a forged
+        // socket.emit("playerInput", [{type:'move', direction: 9999}])
+        // hit applyMovement()'s `velocity.x = direction * speed` uncapped -
+        // map-boundary clamping stopped it leaving the arena, but not an
+        // instant teleport to whichever wall the player was facing, well
+        // beyond anything a real key press could produce in one tick.
+        // Number(...) first, not just Math.sign(input.direction) directly -
+        // a non-numeric forged value (a string, object, etc.) would
+        // otherwise produce NaN here, which then poisons player.position.x
+        // permanently once multiplied through (NaN propagates through every
+        // arithmetic op downstream) - a griefing/DoS vector distinct from
+        // the teleport one. Number(garbage) -> NaN -> `|| 0` catches it.
+        direction: Math.sign(Number(input.direction) || 0),
         ability: input.ability || null,
         activate: input.activate !== undefined ? input.activate : null, 
         seq: typeof input.seq === 'number' ? input.seq : undefined,
@@ -1105,10 +1120,26 @@ const getClientGameState = (gameState)=>{
             state: p.state || 'active', // FIXED: Include state for animations
             cooldowns: msCooldowns(p.cooldowns),
             combo: p.comboCount,
-            // build-order item 7 - not yet consumed by any client UI, same
-            // situation as isFrozen above: exposed now so that work has the
-            // data to key off when it lands.
             burstMeter: p.burstMeter,
+            // build-order item 7: whether a precision-bar burst challenge is
+            // currently active for this player. Deliberately just a boolean,
+            // not the raw burstChallenge object (which only has an internal
+            // server tick number, meaningless to the client) - the client
+            // starts its own local animation timer the moment this flips
+            // true and mirrors BURST_TARGET_START_FRAME/END_FRAME/
+            // BURST_CHALLENGE_DURATION_FRAMES (battleUI.js) to draw the
+            // sweep and target zone. See the note in battleUI.js's
+            // updateBurstChallenge for the latency tradeoff this implies.
+            burstChallengeActive: !!p.burstChallenge,
+            // synced so the client can tell a resolved challenge's PASS
+            // from its FAIL (see battleUI.js's showBurstResult): a
+            // successful triggerComboBreaker sets isInvincible=true in the
+            // same tick it clears burstChallenge, so the client sees both
+            // change together on the falling edge - true means the burst
+            // landed, false means it missed the window or was never
+            // confirmed at all (timeout). Not otherwise consumed
+            // client-side yet (no invincibility VFX), just this.
+            isInvincible: p.isInvincible,
             lastProcessedSeq: p.lastProcessedSeq ?? -1
         })),
         projectiles: gameState.projectiles,

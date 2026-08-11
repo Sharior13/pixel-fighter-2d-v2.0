@@ -1,6 +1,6 @@
 const { matches, createMatch, getMatch, startCharacterSelectTimeout, selectCharacter, lockCharacter, startLoadingTimeout } = require("./matchManager.js");
 const { initializeGameState, startGameLoop } = require("../core/gameState.js");
-const { getRandomCharacter } = require("../data/characterData.js");
+const { getRandomCharacter } = require("../data/characters.js");
 const { debugLog, debugError } = require("../core/debug.js");
 
 const ROOM_ID_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";

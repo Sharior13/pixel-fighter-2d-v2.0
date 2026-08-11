@@ -2,6 +2,7 @@ import { socket } from "../core/socket.js";
 import { canvas } from "../core/render.js";
 import { audioManager } from "../core/audioManager.js";
 import { ASSET_BASE_URL } from "../core/config.js";
+import { getCharacterSelectRoster } from "../core/sim/data/characters.js";
 
 const grid = document.getElementById("character-grid");
 const lockBtn = document.getElementById("lockBtn");
@@ -9,20 +10,18 @@ const player1Preview = document.getElementById("player1-preview");
 const player2Preview = document.getElementById("player2-preview");
 const statusText = document.getElementById("statusText");
 
-//temporary
-const CHARACTERS = [
-  { id: "luffy", name: "Luffy", image: `${ASSET_BASE_URL}/characters/luffy/luffy.gif` },
-  { id: "zoro", name: "Zoro", image: `${ASSET_BASE_URL}/characters/zoro/zoro.gif` },
-  { id: "ichigo", name: "Ichigo", image: `${ASSET_BASE_URL}/characters/ichigo/ichigo.gif` },
-  { id: "rukia", name: "Rukia", image: `${ASSET_BASE_URL}/characters/rukia/rukia.gif` },
-  { id: "naruto", name: "Naruto", image: `${ASSET_BASE_URL}/characters/naruto/naruto.gif`, unavailable: true },
-  { id: "sasuke", name: "Sasuke", image: `${ASSET_BASE_URL}/characters/sasuke/sasuke.gif`, unavailable: true },
-  { id: "kakashi", name: "Kakashi", image: `${ASSET_BASE_URL}/characters/kakashi/kakashi.gif`, unavailable: true },
-  { id: "s1", name: "s1", image: `${ASSET_BASE_URL}/characters/others/s1.gif`, unavailable: true },
-  { id: "s2", name: "s2", image: `${ASSET_BASE_URL}/characters/others/s2.gif`, unavailable: true },
-  { id: "s3", name: "s3", image: `${ASSET_BASE_URL}/characters/others/s3.gif`, unavailable: true },
-  { id: "s4", name: "s4", image: `${ASSET_BASE_URL}/characters/others/s4.gif`, unavailable: true },
-];
+// Roster (real playable characters + locked "coming soon" tiles) now comes
+// from server/data/characters.js - the single source of truth - via its
+// browser mirror (see that file's getCharacterSelectRoster()). This used
+// to be a hand-maintained, parallel list here that could drift out of sync
+// with the real roster; adding/removing a playable character now only
+// requires editing characters.js, nothing in this file.
+const CHARACTERS = getCharacterSelectRoster().map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    image: `${ASSET_BASE_URL}/${entry.thumbnail}`,
+    unavailable: entry.unavailable
+}));
 const characterSelectState = {
     selectedCharacter: null,
     opponentCharacter: null,
