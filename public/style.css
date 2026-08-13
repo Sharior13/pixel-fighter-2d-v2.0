@@ -186,6 +186,43 @@ body{
     text-shadow: 0 0 12px rgba(255, 68, 68, 0.5);
 }
 
+/* ping/latency readout - deliberately unobtrusive, see pingDisplay.js */
+#ping-display {
+    position: fixed;
+    bottom: 10px;
+    right: 12px;
+    z-index: 45;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--bg-color);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    opacity: 0.65;
+    pointer-events: none;
+}
+
+#ping-display.hidden {
+    display: none;
+}
+
+#ping-display.ping-good {
+    color: #4ADE80;
+}
+
+#ping-display.ping-okay {
+    color: #FFD700;
+}
+
+#ping-display.ping-poor {
+    color: #FFA500;
+}
+
+#ping-display.ping-bad,
+#ping-display.ping-disconnected {
+    color: #FF6B6B;
+}
+
 /* loading screen (character lock-in -> fight begin) */
 #loading-screen {
     position: fixed;
