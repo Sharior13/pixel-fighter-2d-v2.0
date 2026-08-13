@@ -1,6 +1,6 @@
 const { getCharacterData } = require('../data/characters.js');
 const { getMapData } = require('../data/maps.js');
-const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES } = require('./attackSystem.js');
+const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES, recordComboSurvived } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
 const hitboxSystem = require('./hitboxSystem.js');
 const { STATES } = stateMachine;
@@ -200,11 +200,15 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 //attempt ({startFrame}) once a 'jump' input while stunned
                 //starts one - see handleBurstInput/triggerComboBreaker.
                 //isInvincible/invincibilityEndFrame are the brief safety
-                //window granted by a successful burst.
+                //window granted by a successful burst. combosSurvived is
+                //the "10 successful combos" unlock gate for the whole
+                //mechanic (isBurstUnlocked/recordComboSurvived) - separate
+                //from comboCount, which resets every individual combo.
                 burstMeter: 0,
                 burstChallenge: null,
                 isInvincible: false,
                 invincibilityEndFrame: 0,
+                combosSurvived: 0,
                 
                 //raw per-tick network input reception queue - drained every
                 //tick regardless of legality (see processInput/gameTick).
@@ -755,6 +759,24 @@ const gameTick = (roomId, io)=>{
         // correct implementation is to just not run any of it this tick.
         if (stateMachine.isFrozen(player)) {
             stateMachine.updateHitstopTimer(player);
+            // Real bug found in live testing: a burst challenge's elapsed-
+            // time check (triggerComboBreaker, attackSystem.js) used to be a
+            // raw `currentFrame - startFrame` with no adjustment for frozen
+            // frames - same class of bug the attack-cancel-window fix
+            // addressed earlier (attackData.frozenFrames) but never applied
+            // here. Since the challenge's OWNER (this player) is frozen for
+            // HITSTOP_DURATION_FRAMES right after the hit that arms it, and
+            // this whole per-tick body - including the burst-confirm input
+            // check in consumeOldestValidInput - is skipped while frozen,
+            // the window was already ~8 frames "spent" before the player
+            // could physically react, which is why it "showed up and
+            // disappeared right away" even with zero network latency.
+            // Tracked here exactly like attackData.frozenFrames, and
+            // subtracted back out in triggerComboBreaker/the timeout check
+            // below so the challenge's clock genuinely pauses while frozen.
+            if (player.burstChallenge) {
+                player.burstChallenge.frozenFrames = (player.burstChallenge.frozenFrames || 0) + 1;
+            }
             return;
         }
 
@@ -765,6 +787,13 @@ const gameTick = (roomId, io)=>{
             stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
             player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
+            // Combo unlock gate (build-order item 7, "only after 10
+            // successful combos") - counts once this combo actually
+            // reached 2+ hits, BEFORE comboCount resets below. A single
+            // poke that never chained into anything doesn't count.
+            if (player.comboCount >= 2) {
+                recordComboSurvived(player);
+            }
             // Combo ends once the defender leaves hitstun and drops to
             // neutral (build-order item 5 / spec section 5) - this is the
             // counter's one and only reset trigger now, replacing the old
@@ -784,8 +813,10 @@ const gameTick = (roomId, io)=>{
         // confirm input arrives in time, the challenge just lapses. No
         // meter cost here - only an actual mistimed confirm attempt
         // (handled in triggerComboBreaker) spends the resource; pure
-        // inaction shouldn't cost the same as a miss.
-        if (player.burstChallenge && (currentFrame - player.burstChallenge.startFrame) > BURST_CHALLENGE_DURATION_FRAMES) {
+        // inaction shouldn't cost the same as a miss. frozenFrames-adjusted
+        // for the same reason triggerComboBreaker's own elapsed check is -
+        // see the note above isFrozen's early-return.
+        if (player.burstChallenge && ((currentFrame - player.burstChallenge.startFrame) - (player.burstChallenge.frozenFrames || 0)) > BURST_CHALLENGE_DURATION_FRAMES) {
             player.burstChallenge = null;
         }
 

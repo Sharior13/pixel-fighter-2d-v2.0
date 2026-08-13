@@ -307,16 +307,51 @@ function getScaledKnockback(baseKnockback, comboCount) {
 // a window sized to actually be humanly landable.
 const BURST_METER_MAX = 100;
 const BURST_METER_PER_DAMAGE = 0.5; // how much burst meter each point of damage taken fills
-const BURST_TARGET_START_FRAME = 6;  // sweet-spot window opens this many frames after the hit that armed the challenge
-const BURST_TARGET_END_FRAME = 14;   // ...and closes here - an 8 frame (~133ms) confirm window, comfortably inside even a decayed hitstun's 16-18 frame budget with room for one real round trip
-const BURST_CHALLENGE_DURATION_FRAMES = 20; // if no confirm arrives by this many frames after arming, the challenge lapses (see gameState.js's per-tick timeout check) - past the target window on purpose, since a confirm can still resolve (just fail) after the window closes rather than needing to land exactly inside it to even register
+// "way more generous" per explicit request - the previous window (8 frames
+// after the arm) was landing on top of the frozen-frame bug above, so it
+// was effectively unusable regardless of tuning; now that the underlying
+// clock actually pauses correctly during hitstop, this is a genuine,
+// substantial widening on top of the corrected baseline, not just working
+// around the bug. ~5.75x wider than before (8 frames -> 46 frames).
+const BURST_TARGET_START_FRAME = 2;  // sweet-spot window opens almost immediately after the hit that armed the challenge (~33ms)
+const BURST_TARGET_END_FRAME = 48;   // ...and stays open until ~800ms - a wide, forgiving confirm window
+const BURST_CHALLENGE_DURATION_FRAMES = 54; // if no confirm arrives by this many frames after arming, the challenge lapses (see gameState.js's per-tick timeout check) - a small buffer past the target window on purpose, since a confirm can still resolve (just fail) after the window closes rather than needing to land exactly inside it to even register
 const BURST_INVINCIBILITY_FRAMES = 30; // ~500ms of safety after a successful burst
 const BURST_SEPARATION_DISTANCE = 150; // how far apart both characters land on a successful burst
 
 // adds to the secondary resource, typically from taking damage (spec
 // wording) - called from applyHit below for every point of damage a
 // defender actually takes, blocked or not.
+// Gate on the whole burst mechanic per explicit request: it shouldn't be
+// available from the start of a match - only once a player has actually
+// survived a meaningful number of real combos (2+ hits landed on them,
+// tracked separately from comboCount since that resets every individual
+// combo - see recordComboSurvived, called from gameState.js's hitstun-end
+// handling before comboCount resets). Before the threshold, fillBurstMeter
+// is a no-op - the meter never fills, so the challenge can never trigger,
+// so nothing ever shows up. A single poke landing doesn't count as a real
+// combo for this purpose, matching what "successful combo" means
+// everywhere else in this file (comboCount only means something once it's
+// at least 2).
+const COMBOS_REQUIRED_TO_UNLOCK_BURST = 10;
+
+// Called once per completed combo (2+ hits) that actually landed on a
+// player, regardless of how it ended - naturally recovering or timing out
+// count, same as a burst that lands (see triggerComboBreaker below, which
+// calls this too before resetting). A single unblocked hit that never
+// chained into anything doesn't count.
+function recordComboSurvived(character) {
+    character.combosSurvived = (character.combosSurvived || 0) + 1;
+}
+
+function isBurstUnlocked(character) {
+    return (character.combosSurvived || 0) >= COMBOS_REQUIRED_TO_UNLOCK_BURST;
+}
+
 function fillBurstMeter(character, amount) {
+    if (!isBurstUnlocked(character)) {
+        return;
+    }
     character.burstMeter = Math.min(BURST_METER_MAX, (character.burstMeter || 0) + Math.max(0, amount) * BURST_METER_PER_DAMAGE);
 }
 
@@ -355,7 +390,14 @@ function triggerComboBreaker(gameState, character, currentFrame) {
         return false;
     }
 
-    const elapsed = currentFrame - challenge.startFrame;
+    // frozenFrames-adjusted - see the note above isFrozen's early-return in
+    // gameState.js for why: this player was frozen (hitstop) for several
+    // frames right after the hit that armed this challenge, and a raw
+    // currentFrame-startFrame subtraction would count that frozen time
+    // against the window, which is what made the challenge unusable before
+    // this fix (elapsed was already ~HITSTOP_DURATION_FRAMES by the time
+    // the player could physically react).
+    const elapsed = (currentFrame - challenge.startFrame) - (challenge.frozenFrames || 0);
     const success = elapsed >= BURST_TARGET_START_FRAME && elapsed <= BURST_TARGET_END_FRAME;
     if (!success) {
         return false;
@@ -364,6 +406,13 @@ function triggerComboBreaker(gameState, character, currentFrame) {
     // cancels all pending hitstun/damage, resets this character to neutral
     character.stunEndFrame = 0;
     setCombatState(character, STATES.IDLE, currentFrame);
+    // A successful burst still counts toward unlocking the mechanic for
+    // NEXT time, same threshold as the natural-recovery path in
+    // gameState.js (real combo = 2+ hits) - a combo did land on this
+    // player even though they escaped it early.
+    if (character.comboCount >= 2) {
+        recordComboSurvived(character);
+    }
     resetComboCount(character);
     character.velocity.x = 0;
     character.velocity.y = 0;
@@ -903,4 +952,4 @@ class AttackHandler {
     }
 }
 
-module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop, getScaledKnockback, fillBurstMeter, isBurstAvailable, triggerComboBreaker, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES };
+module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop, getScaledKnockback, fillBurstMeter, isBurstAvailable, triggerComboBreaker, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES, recordComboSurvived }; 
