@@ -577,4 +577,42 @@ const cleanupSocket = () => {
     debugLog('[Socket] Cleaned up socket connection');
 };
 
-export { initializeSocket, cleanupSocket, socket, pendingInputs };
+// ── Offline identity (Campaign mode only) ───────────────────────────────
+// Campaign fights (public/core/campaign.js) run with ZERO server round-trips
+// - no socket.io connection is ever opened for them. But render.js and
+// battleUI.js identify "which player is me" by comparing a player's
+// socketId against this module's live `socket.id` binding, everywhere,
+// throughout the render/UI code - that's deeply load-bearing plumbing this
+// feature has no reason to duplicate or rewrite (see campaign-mode-spec.md
+// Section 4: reuse localMatch.js/botController.js/render.js "as-is").
+//
+// setOfflineIdentity() lets campaign.js satisfy that same `socket.id`
+// contract without a real connection: it points this module's `socket`
+// binding at a tiny inert stand-in object with just an `id` (plus no-op
+// stubs, in case anything ever calls a method on it). Guarded to only ever
+// touch `socket` when there's no real connection already in progress -
+// campaign is only ever entered from the main menu, never mid real match,
+// so this should never have anything to clobber, but the guard makes that
+// an explicit invariant rather than an assumption.
+let isOfflineIdentity = false;
+
+const setOfflineIdentity = (id) => {
+    if (socket) {
+        debugLog('[Socket] Refusing to set offline identity over an active connection');
+        return;
+    }
+    socket = { id, emit: () => {}, on: () => {}, off: () => {}, disconnect: () => {} };
+    isOfflineIdentity = true;
+};
+
+const clearOfflineIdentity = () => {
+    // only clear the fake stand-in this module created above, never a real
+    // socket.io instance (which has its own cleanup path via
+    // cleanupSocket()).
+    if (isOfflineIdentity) {
+        socket = null;
+        isOfflineIdentity = false;
+    }
+};
+
+export { initializeSocket, cleanupSocket, socket, pendingInputs, setOfflineIdentity, clearOfflineIdentity };

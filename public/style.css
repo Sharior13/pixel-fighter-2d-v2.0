@@ -3014,3 +3014,141 @@ body{
         display: none !important;
     }
 }
+/* ============================================================================
+   CAMPAIGN MODE (public/ui/campaignUI.js) - Level Select, character picker,
+   result screen. Reuses existing tokens (--accent-gold etc.), .btn, and
+   .character-slot/.character-grid conventions rather than inventing a
+   parallel visual language.
+   ============================================================================ */
+.campaign-screen {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    height: 100svh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: clamp(14px, 2.5vh, 28px);
+    padding: clamp(16px, 3vh, 32px) 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    animation: loadIn 0.5s ease-out;
+}
+
+.campaign-screen-header {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.campaign-grid {
+    width: 100%;
+    max-width: 900px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(90px, 14vw, 130px), 1fr));
+    gap: clamp(10px, 2vw, 18px);
+}
+
+.campaign-tile-divider {
+    grid-column: 1 / -1;
+    height: 2px;
+    background: var(--ui-border);
+    opacity: 0.4;
+    margin: 6px 0;
+}
+
+.campaign-tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(30, 10, 50, 0.9) 0%, rgba(20, 5, 35, 0.9) 100%);
+    border: 3px solid #555;
+    border-radius: 10px;
+    padding: clamp(8px, 1.5vw, 14px);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    color: var(--text-white);
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.campaign-tile img {
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
+    object-fit: cover;
+    border-radius: 6px;
+    image-rendering: pixelated;
+}
+
+.campaign-tile:not([disabled]):hover {
+    border-color: var(--accent-cyan);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.7);
+}
+
+.campaign-tile.cleared {
+    border-color: var(--accent-gold);
+}
+
+.campaign-tile[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.campaign-tile-lock {
+    font-size: clamp(24px, 4vw, 40px);
+}
+
+.campaign-tile-label {
+    font-size: clamp(10px, 1.4vw, 14px);
+    text-align: center;
+    letter-spacing: 1px;
+}
+
+.campaign-tile-stars {
+    color: var(--accent-gold);
+    font-size: clamp(11px, 1.6vw, 16px);
+    letter-spacing: 2px;
+}
+
+.campaign-picker-grid {
+    max-height: min(400px, 55vh);
+    max-height: min(400px, 55svh);
+}
+
+.campaign-result-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(16px, 3vh, 28px);
+    margin-top: clamp(40px, 12vh, 100px);
+}
+
+.campaign-result-win {
+    color: var(--accent-gold);
+    text-shadow: 3px 3px 0 var(--shadow-dark);
+}
+
+.campaign-result-loss {
+    color: var(--line-color);
+    text-shadow: 3px 3px 0 var(--shadow-dark);
+}
+
+.campaign-result-stars {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--accent-gold);
+    letter-spacing: 6px;
+}
+
+.campaign-result-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: clamp(12px, 2.5vw, 24px);
+}

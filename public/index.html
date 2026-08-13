@@ -21,6 +21,7 @@
         </div>
         <div class="top-buttons">
             <button class="btn btn-large" id="quick-start-btn">Quick Play</button>
+            <button class="btn btn-large" id="single-player-btn">Single Player</button>
             <button class="btn btn-large" id="room-btn">Create / Join Room</button>
         </div>
         <div class="bottom-buttons">
@@ -28,6 +29,15 @@
             <button class="btn btn-small" id="profile-btn">Profile</button>
         </div>
     </div>
+
+    <!-- campaign mode: Level Select (public/ui/campaignUI.js) -->
+    <div id="campaign-level-select" class="hidden campaign-screen"></div>
+
+    <!-- campaign mode: per-fight character picker (public/ui/campaignUI.js) -->
+    <div id="campaign-character-picker" class="hidden campaign-screen"></div>
+
+    <!-- campaign mode: post-fight result screen (public/ui/campaignUI.js) -->
+    <div id="campaign-result-screen" class="hidden campaign-screen"></div>
 
     <!-- queuing ui -->
     <div id="queuing"></div>
