@@ -484,6 +484,10 @@ function checkComboDrop(attacker, defender) {
 // same fields the same way
 function releaseAttackFields(player) {
     player.currentAttack = null;
+    // attackFrame is only meaningful while isAttacking is true (set by
+    // updateAttacks below) - zero it here too so a stale nonzero value
+    // doesn't linger and get sent to clients between attacks.
+    player.attackFrame = 0;
 }
 
 class AttackHandler {
@@ -683,6 +687,16 @@ class AttackHandler {
             // outright, so this guard is really just "have we already been
             // superseded by executeCancel this tick")
             if (attacker.currentAttackId === attackId) {
+                // Animation-engine sync wire (see
+                // animation-engine-refactor-spec.md, "tick-sequence" mode):
+                // this is the same elapsedFrames the state machine and
+                // checkHit already trust as this attack's authoritative
+                // clock, now also exposed on the player so
+                // getClientGameState() can forward it to clients and
+                // SpriteAnimator can index frameSequence[player.attackFrame]
+                // directly instead of running its own ms timer.
+                attacker.attackFrame = elapsedFrames;
+
                 if (elapsedFrames < config.startupFrames) {
                     setCombatState(attacker, STATES.ATTACK_STARTUP, attackData.startFrame);
                 } else if (elapsedFrames < config.activeEndFrame) {

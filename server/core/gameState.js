@@ -180,6 +180,13 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 },
                 currentAttack: null,
                 currentAttackId: null,
+                //animation-engine sync field (see
+                //animation-engine-refactor-spec.md) - mirrors the same
+                //elapsedFrames expression updateAttacks()/checkHit() in
+                //attackSystem.js already compute internally, so tick-sequence
+                //client animations can index straight into combat's own
+                //frame-accurate clock instead of running a separate timer.
+                attackFrame: 0,
                 
                 //combat stats
                 //── combo counter (build-order item 5) ──
