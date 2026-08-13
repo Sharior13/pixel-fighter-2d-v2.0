@@ -36,21 +36,57 @@ class SpriteAnimator {
         }
     }
     
-    update(deltaTime) {
+    // `player` is accepted (and currently unused) so the call signature
+    // already matches what the upcoming 'tick-sequence' mode needs (it reads
+    // player.attackFrame - see animation-engine-refactor-spec.md) without a
+    // second call-site change later. SpriteManager/render.js already pass it
+    // through as of this step.
+    update(deltaTime, player) {
         if (!this.isLoaded) return;
-        
+
         const animation = this.config.animations[this.currentAnimation];
         if (!animation) {
             debugWarn(`[SpriteAnimator] Animation not found: ${this.currentAnimation}`);
             return;
         }
-        
+
+        // syncMode branching (see animation-engine-refactor-spec.md). No
+        // character data sets syncMode yet, so the missing-value fallback
+        // below IS 'loop' - this step is a rename/branch only, not a
+        // behavior change: every existing animation still plays exactly as
+        // before via _updateTimerBased. 'transition-loop' and
+        // 'tick-sequence' get their real playback paths in a later step;
+        // for now they fall back to the same timer-based playback so
+        // nothing silently freezes if syncMode data lands ahead of the code
+        // that consumes it.
+        const syncMode = animation.syncMode || 'loop';
+
+        switch (syncMode) {
+            case 'loop':
+            case 'one-shot':
+                this._updateTimerBased(deltaTime, animation);
+                break;
+            case 'transition-loop':
+            case 'tick-sequence':
+                debugWarn(`[SpriteAnimator] syncMode "${syncMode}" not yet implemented, falling back to timer-based playback`);
+                this._updateTimerBased(deltaTime, animation);
+                break;
+            default:
+                debugWarn(`[SpriteAnimator] Unknown syncMode "${syncMode}", falling back to timer-based playback`);
+                this._updateTimerBased(deltaTime, animation);
+        }
+    }
+
+    // Exactly the pre-refactor update() body, unchanged, just extracted so
+    // 'loop' and 'one-shot' (and the current no-syncMode-set data) can share
+    // it explicitly instead of it being the only path that existed.
+    _updateTimerBased(deltaTime, animation) {
         this.frameTimer += deltaTime;
-        
+
         if (this.frameTimer >= animation.frameDelay) {
             this.frameTimer = 0;
             this.currentFrame++;
-            
+
             if (this.currentFrame >= animation.frames) {
                 if (animation.loop) {
                     this.currentFrame = 0;

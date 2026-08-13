@@ -118,8 +118,12 @@ class AnimationStateManager {
             this.transitionToAnimation(player.socketId, targetAnimation, animator, currentAnimState, player.character);
         }
         
-        //update the animator
-        animator.update(deltaTime);
+        //update the animator - player is passed through so syncMode
+        //branches that need live combat state (e.g. the upcoming
+        //'tick-sequence' mode reading player.attackFrame) have it available
+        //without another call-site change later (see
+        //animation-engine-refactor-spec.md)
+        animator.update(deltaTime, player);
         
         //store current frame data for next update
         this.updatePreviousFrameData(player, previousFrame);
