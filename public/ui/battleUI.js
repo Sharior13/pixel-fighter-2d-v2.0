@@ -1,5 +1,6 @@
 import { socket } from "../core/socket.js";
 import { ASSET_BASE_URL } from "../core/config.js";
+import { debugLog, debugWarn, debugError } from "../core/debug.js";
 
 class BattleUI {
     constructor() {
@@ -60,7 +61,7 @@ class BattleUI {
     
     initialize(gameState) {
         if (!gameState || !gameState.players || gameState.players.length < 2) {
-            console.error('[BattleUI] Invalid game state for initialization');
+            debugError('[BattleUI] Invalid game state for initialization');
             return;
         }
         
@@ -68,7 +69,7 @@ class BattleUI {
         const opponent = gameState.players.find(p => p.socketId !== socket.id);
         
         if (!localPlayer || !opponent) {
-            console.error('[BattleUI] Could not find players');
+            debugError('[BattleUI] Could not find players');
             return;
         }
         
@@ -106,7 +107,7 @@ class BattleUI {
         this.burstChallengeWasActive = false;
         
         this.show();
-        console.log('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
+        debugLog('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
     }
     
     updateCharacterImage(imageElement, characterName) {
@@ -116,7 +117,7 @@ class BattleUI {
         
         // Handle image load error
         imageElement.onerror = () => {
-            console.warn(`[BattleUI] Character image not found for ${characterName}`);
+            debugWarn(`[BattleUI] Character image not found for ${characterName}`);
             // Use a simple colored div instead of placeholder URL
             imageElement.style.display = 'none';
             imageElement.parentElement.style.background = '#8B4513';

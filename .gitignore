@@ -1,4 +1,4 @@
 .env
 node_modules
-*.md
+docs
 public/core/sim/
