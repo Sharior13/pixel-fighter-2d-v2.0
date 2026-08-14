@@ -1734,7 +1734,7 @@ body{
         }
 
         .burst-challenge-marker.active {
-            animation: burstMarkerSweep var(--burst-duration, 333ms) linear forwards;
+            animation: burstMarkerSweep var(--burst-duration, 900ms) linear forwards;
         }
 
         @keyframes burstMarkerSweep {

@@ -253,9 +253,14 @@ class BattleUI {
     // if those values change: BURST_CHALLENGE_DURATION_FRAMES,
     // BURST_TARGET_START_FRAME, BURST_TARGET_END_FRAME, at 60fps (16.667ms
     // per frame).
-    static BURST_SWEEP_DURATION_MS = 333;  // 20 frames
-    static BURST_TARGET_START_PCT = 30;    // 6 frames / 20 frames
-    static BURST_TARGET_END_PCT = 70;      // 14 frames / 20 frames
+    // Mirrors server/core/attackSystem.js's burst timing constants (widened
+    // significantly per explicit "way more generous" feedback, on top of a
+    // frozen-frame bug fix that made the old window effectively unusable
+    // regardless of tuning - see the notes there). Keep these in sync if
+    // those values change.
+    static BURST_SWEEP_DURATION_MS = 900;  // 54 frames (BURST_CHALLENGE_DURATION_FRAMES)
+    static BURST_TARGET_START_PCT = 3.7;   // 2 frames / 54 frames
+    static BURST_TARGET_END_PCT = 88.9;    // 48 frames / 54 frames
     
     // Handles the rising/falling edge of the LOCAL player's own burst
     // challenge. On the rising edge, positions the target zone, restarts
