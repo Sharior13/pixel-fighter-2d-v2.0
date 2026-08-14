@@ -1,5 +1,6 @@
 import { socket } from "../core/socket.js";
 import { ASSET_BASE_URL } from "../core/config.js";
+import { debugLog, debugWarn, debugError } from "../core/debug.js";
 
 class BattleUI {
     constructor() {
@@ -60,7 +61,7 @@ class BattleUI {
     
     initialize(gameState) {
         if (!gameState || !gameState.players || gameState.players.length < 2) {
-            console.error('[BattleUI] Invalid game state for initialization');
+            debugError('[BattleUI] Invalid game state for initialization');
             return;
         }
         
@@ -68,7 +69,7 @@ class BattleUI {
         const opponent = gameState.players.find(p => p.socketId !== socket.id);
         
         if (!localPlayer || !opponent) {
-            console.error('[BattleUI] Could not find players');
+            debugError('[BattleUI] Could not find players');
             return;
         }
         
@@ -106,7 +107,7 @@ class BattleUI {
         this.burstChallengeWasActive = false;
         
         this.show();
-        console.log('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
+        debugLog('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
     }
     
     updateCharacterImage(imageElement, characterName) {
@@ -116,7 +117,7 @@ class BattleUI {
         
         // Handle image load error
         imageElement.onerror = () => {
-            console.warn(`[BattleUI] Character image not found for ${characterName}`);
+            debugWarn(`[BattleUI] Character image not found for ${characterName}`);
             // Use a simple colored div instead of placeholder URL
             imageElement.style.display = 'none';
             imageElement.parentElement.style.background = '#8B4513';
@@ -252,9 +253,14 @@ class BattleUI {
     // if those values change: BURST_CHALLENGE_DURATION_FRAMES,
     // BURST_TARGET_START_FRAME, BURST_TARGET_END_FRAME, at 60fps (16.667ms
     // per frame).
-    static BURST_SWEEP_DURATION_MS = 333;  // 20 frames
-    static BURST_TARGET_START_PCT = 30;    // 6 frames / 20 frames
-    static BURST_TARGET_END_PCT = 70;      // 14 frames / 20 frames
+    // Mirrors server/core/attackSystem.js's burst timing constants (widened
+    // significantly per explicit "way more generous" feedback, on top of a
+    // frozen-frame bug fix that made the old window effectively unusable
+    // regardless of tuning - see the notes there). Keep these in sync if
+    // those values change.
+    static BURST_SWEEP_DURATION_MS = 900;  // 54 frames (BURST_CHALLENGE_DURATION_FRAMES)
+    static BURST_TARGET_START_PCT = 3.7;   // 2 frames / 54 frames
+    static BURST_TARGET_END_PCT = 88.9;    // 48 frames / 54 frames
     
     // Handles the rising/falling edge of the LOCAL player's own burst
     // challenge. On the rising edge, positions the target zone, restarts
