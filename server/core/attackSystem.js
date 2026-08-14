@@ -261,8 +261,16 @@ function calculateScaledDamage(baseDamage, comboCount) {
 // item-11 pass (see combat-system-refactor-plan.md section 6, "new,
 // separate finding"). The first hit in a combo keeps its full, per-move-
 // authored knockback; only hits after that shrink.
-const KNOCKBACK_DECAY_PER_HIT = 0.3; // each hit after the 1st pushes 30% less far
-const KNOCKBACK_FLOOR = 0.3;         // knockback never drops below 30% of the move's base
+//
+// Steepened per explicit feedback ("combo chaining is still kinda hard,
+// maybe cuz of the knockback") - the original curve (30%/hit, floor 30%)
+// still let a 3rd+ hit drift far enough to matter for tighter-range moves.
+// Now decays faster and floors much lower, so by the 3rd hit onward
+// knockback is reduced to a small fraction of the move's base - keeping a
+// combo's later hits landing close to where they started instead of
+// pushing the defender steadily further away with every hit.
+const KNOCKBACK_DECAY_PER_HIT = 0.45; // each hit after the 1st pushes 45% less far
+const KNOCKBACK_FLOOR = 0.1;          // knockback never drops below 10% of the move's base
 
 function getScaledKnockback(baseKnockback, comboCount) {
     const hitsIntoCombo = Math.max(0, comboCount - 1);
@@ -321,43 +329,30 @@ const BURST_SEPARATION_DISTANCE = 150; // how far apart both characters land on 
 
 // adds to the secondary resource, typically from taking damage (spec
 // wording) - called from applyHit below for every point of damage a
-// defender actually takes, blocked or not.
-// Gate on the whole burst mechanic per explicit request: it shouldn't be
-// available from the start of a match - only once a player has actually
-// survived a meaningful number of real combos (2+ hits landed on them,
-// tracked separately from comboCount since that resets every individual
-// combo - see recordComboSurvived, called from gameState.js's hitstun-end
-// handling before comboCount resets). Before the threshold, fillBurstMeter
-// is a no-op - the meter never fills, so the challenge can never trigger,
-// so nothing ever shows up. A single poke landing doesn't count as a real
-// combo for this purpose, matching what "successful combo" means
-// everywhere else in this file (comboCount only means something once it's
-// at least 2).
-const COMBOS_REQUIRED_TO_UNLOCK_BURST = 10;
-
-// Called once per completed combo (2+ hits) that actually landed on a
-// player, regardless of how it ended - naturally recovering or timing out
-// count, same as a burst that lands (see triggerComboBreaker below, which
-// calls this too before resetting). A single unblocked hit that never
-// chained into anything doesn't count.
-function recordComboSurvived(character) {
-    character.combosSurvived = (character.combosSurvived || 0) + 1;
-}
-
-function isBurstUnlocked(character) {
-    return (character.combosSurvived || 0) >= COMBOS_REQUIRED_TO_UNLOCK_BURST;
-}
-
+// defender actually takes, blocked or not. Kept around per spec
+// compliance and for potential future use, but as of the redesign below
+// it no longer gates anything by itself - see isBurstAvailable.
 function fillBurstMeter(character, amount) {
-    if (!isBurstUnlocked(character)) {
-        return;
-    }
     character.burstMeter = Math.min(BURST_METER_MAX, (character.burstMeter || 0) + Math.max(0, amount) * BURST_METER_PER_DAMAGE);
 }
 
-// checks whether the meter is full
+// Availability gate, corrected after real-play feedback: an earlier
+// version gated this on a cumulative "10 SEPARATE completed combos over
+// the whole match" counter (combosSurvived) - a misreading of "the meter
+// should only appear after 10 successful combos." What was actually meant
+// was much simpler and matches the comboCount the player already sees
+// live ("combo x10"): burst becomes available once the CURRENT combo has
+// reached BURST_COMBO_COUNT_THRESHOLD hits - a comeback option that turns
+// on specifically when you're in real danger (deep in an ongoing combo),
+// not a persistent unlock earned by grinding through many separate
+// combos first. That's also why it "didn't show up at all" before - 10
+// separate full combos each recovering in between is a vastly higher bar
+// to clear than 10 hits in one string, especially given how hard sustained
+// chaining already was this session.
+const BURST_COMBO_COUNT_THRESHOLD = 10;
+
 function isBurstAvailable(character) {
-    return (character.burstMeter || 0) >= BURST_METER_MAX;
+    return (character.comboCount || 0) >= BURST_COMBO_COUNT_THRESHOLD;
 }
 
 // Handles a 'jump' input arriving while a burst challenge is pending -
@@ -406,13 +401,6 @@ function triggerComboBreaker(gameState, character, currentFrame) {
     // cancels all pending hitstun/damage, resets this character to neutral
     character.stunEndFrame = 0;
     setCombatState(character, STATES.IDLE, currentFrame);
-    // A successful burst still counts toward unlocking the mechanic for
-    // NEXT time, same threshold as the natural-recovery path in
-    // gameState.js (real combo = 2+ hits) - a combo did land on this
-    // player even though they escaped it early.
-    if (character.comboCount >= 2) {
-        recordComboSurvived(character);
-    }
     resetComboCount(character);
     character.velocity.x = 0;
     character.velocity.y = 0;
@@ -952,4 +940,4 @@ class AttackHandler {
     }
 }
 
-module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop, getScaledKnockback, fillBurstMeter, isBurstAvailable, triggerComboBreaker, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES, recordComboSurvived }; 
+module.exports = { AttackHandler, ATTACK_CONFIG, msToFrames, FRAME_MS, TICK_RATE, incrementComboCount, resetComboCount, calculateScaledDamage, getScaledHitstun, getScaledGravity, checkComboDrop, getScaledKnockback, fillBurstMeter, isBurstAvailable, triggerComboBreaker, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES };

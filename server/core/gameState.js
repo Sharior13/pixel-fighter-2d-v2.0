@@ -1,6 +1,6 @@
 const { getCharacterData } = require('../data/characters.js');
 const { getMapData } = require('../data/maps.js');
-const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES, recordComboSurvived } = require('./attackSystem.js');
+const { AttackHandler, FRAME_MS, TICK_RATE, msToFrames, resetComboCount, getScaledGravity, handleBurstInput, BURST_CHALLENGE_DURATION_FRAMES } = require('./attackSystem.js');
 const stateMachine = require('./stateMachine.js');
 const hitboxSystem = require('./hitboxSystem.js');
 const { STATES } = stateMachine;
@@ -195,20 +195,20 @@ const initializeGameState = (roomId, playerData, mapId)=>{
                 killCount: 0,
 
                 //── combo breaker / burst (build-order item 7) ──
-                //burstMeter fills from taking damage (fillBurstMeter);
-                //burstChallenge holds the in-progress precision-bar timing
-                //attempt ({startFrame}) once a 'jump' input while stunned
-                //starts one - see handleBurstInput/triggerComboBreaker.
-                //isInvincible/invincibilityEndFrame are the brief safety
-                //window granted by a successful burst. combosSurvived is
-                //the "10 successful combos" unlock gate for the whole
-                //mechanic (isBurstUnlocked/recordComboSurvived) - separate
-                //from comboCount, which resets every individual combo.
+                //burstMeter fills from taking damage (fillBurstMeter), kept
+                //for spec compliance/future use but doesn't gate anything
+                //on its own; availability is comboCount-based instead
+                //(isBurstAvailable in attackSystem.js: available once the
+                //CURRENT combo reaches 10 hits). burstChallenge holds the
+                //in-progress precision-bar timing attempt ({startFrame})
+                //once the challenge auto-arms on a qualifying hit - see
+                //handleBurstInput/triggerComboBreaker. isInvincible/
+                //invincibilityEndFrame are the brief safety window granted
+                //by a successful burst.
                 burstMeter: 0,
                 burstChallenge: null,
                 isInvincible: false,
                 invincibilityEndFrame: 0,
-                combosSurvived: 0,
                 
                 //raw per-tick network input reception queue - drained every
                 //tick regardless of legality (see processInput/gameTick).
@@ -787,13 +787,6 @@ const gameTick = (roomId, io)=>{
             stateMachine.setCombatState(player, STATES.IDLE, currentFrame);
             player.stunEndFrame = 0;
             player.velocity.x = 0; // Clear velocity to prevent walk animation
-            // Combo unlock gate (build-order item 7, "only after 10
-            // successful combos") - counts once this combo actually
-            // reached 2+ hits, BEFORE comboCount resets below. A single
-            // poke that never chained into anything doesn't count.
-            if (player.comboCount >= 2) {
-                recordComboSurvived(player);
-            }
             // Combo ends once the defender leaves hitstun and drops to
             // neutral (build-order item 5 / spec section 5) - this is the
             // counter's one and only reset trigger now, replacing the old
