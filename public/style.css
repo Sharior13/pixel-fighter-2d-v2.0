@@ -3037,6 +3037,18 @@ body{
     animation: loadIn 0.5s ease-out;
 }
 
+/* .hidden (declared earlier in this file) and .campaign-screen both have
+   single-class specificity, so without this override, whichever rule comes
+   later in the cascade (.campaign-screen's `display: flex`) would always win
+   and the "hidden" class would silently do nothing - the screen would stay
+   visible, still occupying space in body's flex row (squeezing everything
+   else), and any button inside it could stay focused, letting a stray
+   Space/Enter keypress re-fire its click handler mid-fight. This rule's two-
+   class specificity guarantees .hidden always wins on these screens. */
+.campaign-screen.hidden {
+    display: none;
+}
+
 .campaign-screen-header {
     width: 100%;
     max-width: 900px;

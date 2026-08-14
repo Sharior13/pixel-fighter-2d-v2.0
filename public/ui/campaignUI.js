@@ -6,11 +6,12 @@
 // Sections 8/9.
 // ============================================================================
 
+import { canvas } from "../core/render.js";
 import { getCharacterData } from "../core/sim/data/characters.js";
 import { ASSET_BASE_URL } from "../core/config.js";
 import {
     getRosterCharacterIds,
-    getSelectablePlayerCharacterIds,
+    getSelectableCharacterIdsForFight,
     getLevelSelectData,
     getFightConfig,
     startFight,
@@ -47,12 +48,25 @@ const hideAllCampaignScreens = () => {
     levelSelectEl.classList.add("hidden");
     characterPickerEl.classList.add("hidden");
     resultScreenEl.classList.add("hidden");
+    // Belt-and-suspenders alongside the CSS fix for the .hidden/.campaign-
+    // screen specificity collision: a <button> that still has focus when
+    // its screen goes away can otherwise catch a later Space/Enter keypress
+    // (browsers auto-click a focused button on Space) and re-fire whatever
+    // that button used to do - e.g. relaunching a fight mid-match. Explicitly
+    // dropping focus here means that can't happen even if some future click
+    // handler forgets to navigate away cleanly.
+    if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
+    }
 };
 
 // ── Level Select (spec Section 8) ───────────────────────────────────────
 const openLevelSelect = () => {
     titleScreenUI.hideTitleScreen();
     hideAllCampaignScreens();
+    // Same background the title screen/character-select use - restores it
+    // in case a previous fight cleared it (see campaign.js's startFight).
+    canvas.style.backgroundImage = "url('../assets/background/title-bg.gif')";
     renderLevelSelect();
     levelSelectEl.classList.remove("hidden");
 };
@@ -133,7 +147,7 @@ const openCharacterPicker = (kind, slotIndex) => {
 };
 
 const renderCharacterPicker = (kind, slotIndex) => {
-    const selectableIds = getSelectablePlayerCharacterIds();
+    const selectableIds = getSelectableCharacterIdsForFight(kind, slotIndex);
     const opponentPreviewId = kind === "rival" ? null : getRosterCharacterIds()[slotIndex];
 
     const opponentLabel = kind === "rival"

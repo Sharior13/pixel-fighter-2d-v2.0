@@ -23,6 +23,7 @@ import {
     updateGameState,
     triggerKOAnimation,
     setLocalRenderMode,
+    canvas,
 } from "./render.js";
 import { setOfflineIdentity, clearOfflineIdentity } from "./socket.js";
 import { battleUI } from "../ui/battleUI.js";
@@ -50,6 +51,24 @@ const isCharacterUnlockedForPlayer = (_characterId) => true;
 
 const getSelectablePlayerCharacterIds = () =>
     getRosterCharacterIds().filter(isCharacterUnlockedForPlayer);
+
+// Which characters the player can pick FOR A GIVEN FIGHT. Identical to
+// getSelectablePlayerCharacterIds() except a slot fight also excludes that
+// slot's own opponent - mirror matchups only make sense for the Rival fight,
+// where playing as the opponent's character *is* the point (spec Section 6:
+// the Rival always mirrors whatever the player picks).
+const getSelectableCharacterIdsForFight = (kind, slotIndex) => {
+    const selectable = getSelectablePlayerCharacterIds();
+    if (kind === "rival") {
+        return selectable;
+    }
+    const opponentCharacterId = getRosterCharacterIds()[slotIndex];
+    const filtered = selectable.filter((id) => id !== opponentCharacterId);
+    // Defensive fallback for a degenerate roster (e.g. only one playable
+    // character total, and it's also this slot's opponent) - an unusable
+    // empty picker would be a worse outcome than allowing the mirror here.
+    return filtered.length > 0 ? filtered : selectable;
+};
 
 // ── Difficulty curve (spec Section 7) ───────────────────────────────────
 // Band boundaries are fractions of normalized roster position, not hand-
@@ -227,6 +246,12 @@ const startFight = async (config, { onProgress, onMatchEnd } = {}) => {
     // setOfflineIdentity) before touching either of them.
     setOfflineIdentity(CAMPAIGN_PLAYER_ID);
 
+    // Same thing socket.js's "matchLoading" handler does for a real/Quick
+    // Play match: clear the title-screen background gif so the map's own
+    // background (drawn by render.js's setMap()/drawBackground()) shows
+    // cleanly instead of the title art bleeding through behind the fight.
+    canvas.style.backgroundImage = "none";
+
     const local = startLocalMatch({
         roomId: CAMPAIGN_ROOM_ID,
         mapId,
@@ -302,6 +327,7 @@ const handleMatchEnd = ({ winner, finalStats }, onMatchEnd) => {
 export {
     getRosterCharacterIds,
     getSelectablePlayerCharacterIds,
+    getSelectableCharacterIdsForFight,
     isCharacterUnlockedForPlayer,
     getLevelSelectData,
     getFightConfig,
