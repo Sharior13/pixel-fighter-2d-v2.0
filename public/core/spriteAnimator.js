@@ -9,6 +9,18 @@ class SpriteAnimator {
         this.currentFrame = 0;
         this.frameTimer = 0;
 
+        // 'transition-loop' state (see animation-engine-refactor-spec.md):
+        // which sub-clip (intro one-shot, or the hold loop it hands off to)
+        // is currently playing. Reset to 'intro' whenever setAnimation()
+        // resets playback.
+        this.transitionPhase = 'intro';
+
+        // 'tick-sequence' state: the player.attackFrame value used to
+        // produce the currently-drawn frame, kept around so
+        // isAnimationFinished() (which is called with no arguments) can
+        // still answer correctly without needing the player object again.
+        this._lastAttackFrame = 0;
+
         //track loading across all images
         this._totalSheets = Object.keys(spriteSheets).length;
         this._loadedCount = 0;
@@ -52,13 +64,8 @@ class SpriteAnimator {
 
         // syncMode branching (see animation-engine-refactor-spec.md). No
         // character data sets syncMode yet, so the missing-value fallback
-        // below IS 'loop' - this step is a rename/branch only, not a
-        // behavior change: every existing animation still plays exactly as
-        // before via _updateTimerBased. 'transition-loop' and
-        // 'tick-sequence' get their real playback paths in a later step;
-        // for now they fall back to the same timer-based playback so
-        // nothing silently freezes if syncMode data lands ahead of the code
-        // that consumes it.
+        // below IS 'loop' - this keeps every current animation playing
+        // exactly as before via _updateTimerBased.
         const syncMode = animation.syncMode || 'loop';
 
         switch (syncMode) {
@@ -67,9 +74,10 @@ class SpriteAnimator {
                 this._updateTimerBased(deltaTime, animation);
                 break;
             case 'transition-loop':
+                this._updateTransitionLoop(deltaTime, animation);
+                break;
             case 'tick-sequence':
-                debugWarn(`[SpriteAnimator] syncMode "${syncMode}" not yet implemented, falling back to timer-based playback`);
-                this._updateTimerBased(deltaTime, animation);
+                this._updateTickSequence(animation, player);
                 break;
             default:
                 debugWarn(`[SpriteAnimator] Unknown syncMode "${syncMode}", falling back to timer-based playback`);
@@ -78,8 +86,8 @@ class SpriteAnimator {
     }
 
     // Exactly the pre-refactor update() body, unchanged, just extracted so
-    // 'loop' and 'one-shot' (and the current no-syncMode-set data) can share
-    // it explicitly instead of it being the only path that existed.
+    // 'loop' and 'one-shot' (and any animation with no syncMode set) can
+    // share it explicitly instead of it being the only path that existed.
     _updateTimerBased(deltaTime, animation) {
         this.frameTimer += deltaTime;
 
@@ -99,6 +107,62 @@ class SpriteAnimator {
             }
         }
     }
+
+    // 'transition-loop' mode (see animation-engine-refactor-spec.md):
+    // plays animation.intro once at its own frameDelay, then hands off to
+    // animation.hold and loops there. The condition for leaving this
+    // animation altogether (exitCondition) is NOT evaluated here - that's
+    // animationStateManager's job, deciding whether to call setAnimation()
+    // to a different target. This method only owns the intro->hold handoff
+    // internal to a single animation staying selected.
+    _updateTransitionLoop(deltaTime, animation) {
+        const sub = this.transitionPhase === 'hold' ? animation.hold : animation.intro;
+        if (!sub) {
+            debugWarn(`[SpriteAnimator] transition-loop animation "${this.currentAnimation}" missing "${this.transitionPhase}" clip`);
+            return;
+        }
+
+        this.frameTimer += deltaTime;
+
+        if (this.frameTimer >= sub.frameDelay) {
+            this.frameTimer = 0;
+            this.currentFrame++;
+
+            if (this.currentFrame >= sub.frames) {
+                if (sub.loop) {
+                    this.currentFrame = 0;
+                } else if (this.transitionPhase === 'intro') {
+                    // intro clip finished - hand off to the hold clip
+                    this.transitionPhase = 'hold';
+                    this.currentFrame = 0;
+                } else {
+                    // hold clip authored non-looping (unusual) - just hold
+                    // its last frame rather than reading past the end
+                    this.currentFrame = sub.frames - 1;
+                }
+            }
+        }
+    }
+
+    // 'tick-sequence' mode (see animation-engine-refactor-spec.md): no
+    // independent timer at all. The frame to draw is looked up directly
+    // from the authoritative combat tick data (player.attackFrame, wired in
+    // attackSystem.js's updateAttacks()) via this animation's frameSequence
+    // table. Because this reads player.attackFrame fresh every call,
+    // hitstop freezes and rollback/reconciliation replays are automatically
+    // correct - whatever tick the sim says it's on is exactly the frame
+    // shown, with no separate clock that could ever drift from it.
+    _updateTickSequence(animation, player) {
+        const seq = animation.frameSequence;
+        if (!seq || seq.length === 0) {
+            debugWarn(`[SpriteAnimator] tick-sequence animation "${this.currentAnimation}" has no frameSequence`);
+            return;
+        }
+
+        const attackFrame = player?.attackFrame ?? 0;
+        this._lastAttackFrame = attackFrame;
+        this.currentFrame = seq[attackFrame] ?? seq[seq.length - 1];
+    }
     
     setAnimation(animationName, reset = true) {
         if (this.currentAnimation === animationName && !reset) {
@@ -114,6 +178,8 @@ class SpriteAnimator {
         if (reset) {
             this.currentFrame = 0;
             this.frameTimer = 0;
+            // restart at the intro clip for transition-loop animations
+            this.transitionPhase = 'intro';
         }
     }
     
@@ -128,27 +194,43 @@ class SpriteAnimator {
         const animation = this.config.animations[this.currentAnimation];
         if (!animation) return;
 
-        const sheet = this.spriteSheets[animation.sheet || 'main'];
+        // transition-loop animations keep their sheet/row/startFrame inside
+        // the intro/hold sub-configs rather than on the animation object
+        // itself (see animation-engine-refactor-spec.md) - resolve
+        // whichever sub-clip is currently active before reading any of
+        // those fields. Every other mode just uses `animation` directly,
+        // unchanged from before.
+        let frameSource = animation;
+        if (animation.syncMode === 'transition-loop') {
+            frameSource = this.transitionPhase === 'hold' ? animation.hold : animation.intro;
+            if (!frameSource) return;
+        }
+
+        const sheet = this.spriteSheets[frameSource.sheet || 'main'];
         if (!sheet) {
-            debugWarn(`[SpriteAnimator] Sheet "${animation.sheet || 'main'}" not found for animation "${this.currentAnimation}"`);
+            debugWarn(`[SpriteAnimator] Sheet "${frameSource.sheet || 'main'}" not found for animation "${this.currentAnimation}"`);
             return;
         }
         
         const frameWidth = this.config.frameWidth;
         const frameHeight = this.config.frameHeight;
+        // `|| 0` defaults added for tick-sequence entries, which per the
+        // spec don't author startFrame/row/column - existing loop/one-shot
+        // data always sets these explicitly, so this is a no-op for it.
+        const startFrame = frameSource.startFrame || 0;
         
         let sourceX, sourceY;
         
         if (this.config.layout === 'horizontal') {
-            sourceX = (animation.startFrame + this.currentFrame) * frameWidth;
-            sourceY = animation.row * frameHeight;
+            sourceX = (startFrame + this.currentFrame) * frameWidth;
+            sourceY = (frameSource.row || 0) * frameHeight;
         } else if (this.config.layout === 'vertical') {
-            sourceX = animation.column * frameWidth;
-            sourceY = (animation.startFrame + this.currentFrame) * frameHeight;
+            sourceX = (frameSource.column || 0) * frameWidth;
+            sourceY = (startFrame + this.currentFrame) * frameHeight;
         } else {
             // Grid layout
             const totalColumns = this.config.columns || 1;
-            const absoluteFrame = animation.startFrame + this.currentFrame;
+            const absoluteFrame = startFrame + this.currentFrame;
             sourceX = (absoluteFrame % totalColumns) * frameWidth;
             sourceY = Math.floor(absoluteFrame / totalColumns) * frameHeight;
         }
@@ -181,10 +263,40 @@ class SpriteAnimator {
         return this.currentAnimation;
     }
     
+    // Generalized across syncModes (see animation-engine-refactor-spec.md).
+    // Used by animationStateManager.canTransitionTo() to decide whether a
+    // NON_INTERRUPTIBLE animation is allowed to be replaced yet.
     isAnimationFinished() {
         const animation = this.config.animations[this.currentAnimation];
-        if (!animation || animation.loop) return false;
-        return this.currentFrame >= animation.frames - 1;
+        if (!animation) return false;
+
+        // NOTE: unlike update(), this does NOT default a missing syncMode
+        // to 'loop'. Current character data (attack1/attack2/hit/defeat,
+        // etc.) sets loop:false but has no syncMode field at all - falling
+        // back to 'loop' here would make isAnimationFinished() permanently
+        // return false for them, and since they're all in
+        // NON_INTERRUPTIBLE, canTransitionTo() would then never let the
+        // animator leave, freezing on the last frame forever. Only
+        // transition-loop/tick-sequence (both newly-introduced, explicitly
+        // authored) get their own branch; everything else - including
+        // every animation with no syncMode set - falls through to the
+        // original animation.loop-based check, unchanged from before.
+        switch (animation.syncMode) {
+            case 'transition-loop':
+                // Authoritative exit is exitCondition(player), evaluated by
+                // animationStateManager - not a frame count. Once handed
+                // off to the hold clip this behaves like a loop and is
+                // never "finished" on its own.
+                return false;
+            case 'tick-sequence': {
+                const seq = animation.frameSequence;
+                if (!seq || seq.length === 0) return false;
+                return this._lastAttackFrame >= seq.length - 1;
+            }
+            default:
+                if (animation.loop) return false;
+                return this.currentFrame >= animation.frames - 1;
+        }
     }
 }
 
