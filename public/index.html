@@ -345,6 +345,18 @@
         <p>Rotate your device to landscape<br>for the best experience</p>
     </div>
 
+    <!-- full screen gate (see public/core/fullscreenGate.js):
+         desktop = dismissible one-time disclaimer, mobile/tablet = mandatory,
+         stays live for the whole session until full screen + landscape are
+         both satisfied -->
+    <div id="fullscreen-gate">
+        <button id="fullscreen-gate-close" aria-label="Close">✕</button>
+        <div id="fullscreen-gate-rotate-icon" class="hidden">⟳</div>
+        <p id="fullscreen-gate-rotate-message" class="hidden">Rotate your device to landscape</p>
+        <p id="fullscreen-gate-message">For the best experience, play in full screen.</p>
+        <button id="fullscreen-gate-btn" class="btn btn-small">Enter Full Screen</button>
+    </div>
+
     <!-- on-screen touch controls (shown automatically on touch devices) -->
     <div id="touch-controls" class="hidden">
         <div class="touch-dpad" id="touch-dpad">
