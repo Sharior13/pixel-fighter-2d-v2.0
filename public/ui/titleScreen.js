@@ -1,7 +1,7 @@
 import { initializeRender, canvas } from "../core/render.js";
 import { initializeSocket } from "../core/socket.js";
 import "./characterSelect.js";
-import { openLevelSelect } from "./campaignUI.js";
+import { openDifficultySelect } from "./campaignUI.js";
 import "../core/input.js";
 import { audioManager } from "../core/audioManager.js";
 import { ASSET_BASE_URL } from "../core/config.js";
@@ -69,8 +69,9 @@ class TitleScreenUI {
                 case "single-player-btn":
                     // Campaign is fully offline (see core/campaign.js) - no
                     // socket connection involved, so this skips startGame()
-                    // entirely and goes straight to the Level Select screen.
-                    openLevelSelect();
+                    // entirely and goes straight to Difficulty Select
+                    // (which then leads into Level Select).
+                    openDifficultySelect();
                     break;
                 case "room-btn":
                     // Show custom room UI

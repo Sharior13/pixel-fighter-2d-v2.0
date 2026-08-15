@@ -261,16 +261,8 @@ function calculateScaledDamage(baseDamage, comboCount) {
 // item-11 pass (see combat-system-refactor-plan.md section 6, "new,
 // separate finding"). The first hit in a combo keeps its full, per-move-
 // authored knockback; only hits after that shrink.
-//
-// Steepened per explicit feedback ("combo chaining is still kinda hard,
-// maybe cuz of the knockback") - the original curve (30%/hit, floor 30%)
-// still let a 3rd+ hit drift far enough to matter for tighter-range moves.
-// Now decays faster and floors much lower, so by the 3rd hit onward
-// knockback is reduced to a small fraction of the move's base - keeping a
-// combo's later hits landing close to where they started instead of
-// pushing the defender steadily further away with every hit.
-const KNOCKBACK_DECAY_PER_HIT = 0.45; // each hit after the 1st pushes 45% less far
-const KNOCKBACK_FLOOR = 0.1;          // knockback never drops below 10% of the move's base
+const KNOCKBACK_DECAY_PER_HIT = 0.3; // each hit after the 1st pushes 30% less far
+const KNOCKBACK_FLOOR = 0.3;         // knockback never drops below 30% of the move's base
 
 function getScaledKnockback(baseKnockback, comboCount) {
     const hitsIntoCombo = Math.max(0, comboCount - 1);
@@ -315,44 +307,22 @@ function getScaledKnockback(baseKnockback, comboCount) {
 // a window sized to actually be humanly landable.
 const BURST_METER_MAX = 100;
 const BURST_METER_PER_DAMAGE = 0.5; // how much burst meter each point of damage taken fills
-// "way more generous" per explicit request - the previous window (8 frames
-// after the arm) was landing on top of the frozen-frame bug above, so it
-// was effectively unusable regardless of tuning; now that the underlying
-// clock actually pauses correctly during hitstop, this is a genuine,
-// substantial widening on top of the corrected baseline, not just working
-// around the bug. ~5.75x wider than before (8 frames -> 46 frames).
-const BURST_TARGET_START_FRAME = 2;  // sweet-spot window opens almost immediately after the hit that armed the challenge (~33ms)
-const BURST_TARGET_END_FRAME = 48;   // ...and stays open until ~800ms - a wide, forgiving confirm window
-const BURST_CHALLENGE_DURATION_FRAMES = 54; // if no confirm arrives by this many frames after arming, the challenge lapses (see gameState.js's per-tick timeout check) - a small buffer past the target window on purpose, since a confirm can still resolve (just fail) after the window closes rather than needing to land exactly inside it to even register
+const BURST_TARGET_START_FRAME = 6;  // sweet-spot window opens this many frames after the hit that armed the challenge
+const BURST_TARGET_END_FRAME = 14;   // ...and closes here - an 8 frame (~133ms) confirm window, comfortably inside even a decayed hitstun's 16-18 frame budget with room for one real round trip
+const BURST_CHALLENGE_DURATION_FRAMES = 20; // if no confirm arrives by this many frames after arming, the challenge lapses (see gameState.js's per-tick timeout check) - past the target window on purpose, since a confirm can still resolve (just fail) after the window closes rather than needing to land exactly inside it to even register
 const BURST_INVINCIBILITY_FRAMES = 30; // ~500ms of safety after a successful burst
 const BURST_SEPARATION_DISTANCE = 150; // how far apart both characters land on a successful burst
 
 // adds to the secondary resource, typically from taking damage (spec
 // wording) - called from applyHit below for every point of damage a
-// defender actually takes, blocked or not. Kept around per spec
-// compliance and for potential future use, but as of the redesign below
-// it no longer gates anything by itself - see isBurstAvailable.
+// defender actually takes, blocked or not.
 function fillBurstMeter(character, amount) {
     character.burstMeter = Math.min(BURST_METER_MAX, (character.burstMeter || 0) + Math.max(0, amount) * BURST_METER_PER_DAMAGE);
 }
 
-// Availability gate, corrected after real-play feedback: an earlier
-// version gated this on a cumulative "10 SEPARATE completed combos over
-// the whole match" counter (combosSurvived) - a misreading of "the meter
-// should only appear after 10 successful combos." What was actually meant
-// was much simpler and matches the comboCount the player already sees
-// live ("combo x10"): burst becomes available once the CURRENT combo has
-// reached BURST_COMBO_COUNT_THRESHOLD hits - a comeback option that turns
-// on specifically when you're in real danger (deep in an ongoing combo),
-// not a persistent unlock earned by grinding through many separate
-// combos first. That's also why it "didn't show up at all" before - 10
-// separate full combos each recovering in between is a vastly higher bar
-// to clear than 10 hits in one string, especially given how hard sustained
-// chaining already was this session.
-const BURST_COMBO_COUNT_THRESHOLD = 10;
-
+// checks whether the meter is full
 function isBurstAvailable(character) {
-    return (character.comboCount || 0) >= BURST_COMBO_COUNT_THRESHOLD;
+    return (character.burstMeter || 0) >= BURST_METER_MAX;
 }
 
 // Handles a 'jump' input arriving while a burst challenge is pending -
@@ -385,14 +355,7 @@ function triggerComboBreaker(gameState, character, currentFrame) {
         return false;
     }
 
-    // frozenFrames-adjusted - see the note above isFrozen's early-return in
-    // gameState.js for why: this player was frozen (hitstop) for several
-    // frames right after the hit that armed this challenge, and a raw
-    // currentFrame-startFrame subtraction would count that frozen time
-    // against the window, which is what made the challenge unusable before
-    // this fix (elapsed was already ~HITSTOP_DURATION_FRAMES by the time
-    // the player could physically react).
-    const elapsed = (currentFrame - challenge.startFrame) - (challenge.frozenFrames || 0);
+    const elapsed = currentFrame - challenge.startFrame;
     const success = elapsed >= BURST_TARGET_START_FRAME && elapsed <= BURST_TARGET_END_FRAME;
     if (!success) {
         return false;

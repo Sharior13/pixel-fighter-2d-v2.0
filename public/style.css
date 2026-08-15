@@ -1734,7 +1734,7 @@ body{
         }
 
         .burst-challenge-marker.active {
-            animation: burstMarkerSweep var(--burst-duration, 900ms) linear forwards;
+            animation: burstMarkerSweep var(--burst-duration, 333ms) linear forwards;
         }
 
         @keyframes burstMarkerSweep {
@@ -3035,6 +3035,13 @@ body{
     overflow-y: auto;
     overflow-x: hidden;
     animation: loadIn 0.5s ease-out;
+    /* Own background rather than relying on the canvas showing through -
+       the canvas's 2D bitmap gets wiped any time render.js's window
+       "resize" handler fires (setting canvas.width/height always clears
+       the drawn frame, regardless of whether the size actually changed),
+       which was leaving the result screen sitting over a plain white page
+       background whenever that happened mid-fight or right after. */
+    background: linear-gradient(135deg, var(--dark-purple) 0%, #170826 100%);
 }
 
 /* .hidden (declared earlier in this file) and .campaign-screen both have
@@ -3098,6 +3105,20 @@ body{
     image-rendering: pixelated;
 }
 
+/* The Rival tile has no single fixed character (it mirrors whatever the
+   player picks), so it renders this "?" placeholder instead of an <img> -
+   without an explicit box the same size as .campaign-tile img above, its
+   tile collapses shorter than every other tile in the grid. */
+.campaign-tile-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
+    font-size: clamp(24px, 4vw, 40px);
+    color: var(--accent-cyan);
+}
+
 .campaign-tile:not([disabled]):hover {
     border-color: var(--accent-cyan);
     transform: scale(1.05);
@@ -3114,6 +3135,11 @@ body{
 }
 
 .campaign-tile-lock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
     font-size: clamp(24px, 4vw, 40px);
 }
 
@@ -3163,4 +3189,65 @@ body{
     flex-wrap: wrap;
     justify-content: center;
     gap: clamp(12px, 2.5vw, 24px);
+}
+
+/* ── Campaign Difficulty Select (spec Section 8) ─────────────────────── */
+.campaign-difficulty-grid {
+    width: 100%;
+    max-width: 700px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(clamp(140px, 24vw, 200px), 1fr));
+    gap: clamp(14px, 2.5vw, 24px);
+}
+
+.campaign-difficulty-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: linear-gradient(135deg, rgba(30, 10, 50, 0.9) 0%, rgba(20, 5, 35, 0.9) 100%);
+    border: 3px solid #555;
+    border-radius: 10px;
+    padding: clamp(18px, 3vh, 28px) 12px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    color: var(--text-white);
+    font-family: Arial, Helvetica, sans-serif;
+    text-align: center;
+}
+
+.campaign-difficulty-tile:hover {
+    border-color: var(--accent-cyan);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.7);
+}
+
+.campaign-difficulty-tile.last-played {
+    border-color: var(--accent-gold);
+}
+
+.campaign-difficulty-name {
+    font-size: clamp(18px, 3vw, 26px);
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+
+.campaign-difficulty-lap {
+    font-size: clamp(11px, 1.6vw, 14px);
+    color: var(--accent-cyan);
+    letter-spacing: 1px;
+}
+
+.campaign-difficulty-progress,
+.campaign-difficulty-rival {
+    font-size: clamp(11px, 1.6vw, 14px);
+    color: #ccc;
+}
+
+.campaign-result-lapup {
+    color: var(--accent-cyan);
+    font-size: clamp(13px, 2vw, 18px);
+    text-align: center;
+    max-width: 90vw;
 }

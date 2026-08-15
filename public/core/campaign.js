@@ -10,6 +10,10 @@
 // Roster-agnostic by construction (spec Section 5): every slot count, band
 // boundary, and unlock check below is derived from getAllCharacterIds() at
 // call time - nothing here hardcodes a character id or a roster length.
+//
+// Difficulty-agnostic in the same way (spec Sections 8/9): every fight's
+// skill/personality resolves through a shared band+offset mechanism rather
+// than per-(difficulty, lap) hand-authored data.
 // ============================================================================
 
 import { getAllCharacterIds, getCharacterData } from "./sim/data/characters.js";
@@ -29,7 +33,7 @@ import { setOfflineIdentity, clearOfflineIdentity } from "./socket.js";
 import { battleUI } from "../ui/battleUI.js";
 import { preloadMatchAssets } from "./assetPreloader.js";
 import { audioManager } from "./audioManager.js";
-import { debugLog, debugError } from "./debug.js";
+import { debugLog, debugError, isDebugMode } from "./debug.js";
 
 const CAMPAIGN_ROOM_ID = "campaign";
 const CAMPAIGN_PLAYER_ID = "campaign-player";
@@ -43,7 +47,7 @@ const STORAGE_KEY = "campaignProgress";
 const getRosterCharacterIds = () => getAllCharacterIds();
 
 // No per-player character-unlock system exists yet (spec Section 5, point 1 /
-// Section 14) - every real character is player-selectable today. The
+// Section 16) - every real character is player-selectable today. The
 // character-picker step (campaignUI.js) filters through this function
 // specifically so wiring in a real "is X unlocked for this player" check
 // later is a one-line change here, not something to untangle from UI logic.
@@ -70,7 +74,7 @@ const getSelectableCharacterIdsForFight = (kind, slotIndex) => {
     return filtered.length > 0 ? filtered : selectable;
 };
 
-// ── Difficulty curve (spec Section 7) ───────────────────────────────────
+// ── Difficulty curve (spec Section 7 — base curve, Normal/lap 1) ────────
 // Band boundaries are fractions of normalized roster position, not hand-
 // authored per-slot tuples - this is what lets the curve automatically
 // re-stretch to fit however many characters exist.
@@ -87,14 +91,80 @@ const getDifficultyBand = (slotIndex, rosterLength) => {
 
 const pickFromPool = (pool) => pool[Math.floor(Math.random() * pool.length)];
 
-// ── localStorage persistence (spec Section 11) ──────────────────────────
-// Keyed by character ID (never array index/slot number - see Section 11),
-// which is what keeps saved progress correctly attached across roster
-// reorders/resizes. Stale entries (a characterId no longer in the current
-// roster) are simply never surfaced by getLevelSelectData() below, which
-// only ever iterates the CURRENT roster and looks entries up by id - so no
-// explicit "delete unknown keys" pass is needed here (spec Section 5, point
-// 5 / Section 12).
+// ── Campaign Difficulty tiers & New Game+ (spec Sections 8/9) ───────────
+// Player-facing tier, distinct from the per-band skill VALUES above even
+// though the labels read the same - kept as its own constant on purpose
+// (see spec Section 8) so the two concepts never get silently conflated.
+const CAMPAIGN_DIFFICULTIES = ["easy", "normal", "hard"];
+
+// Mirrors botController.js's SKILL_LEVELS keys/order (that object isn't
+// exported, so this is duplicated here deliberately - same precedent as
+// DIFFICULTY_BANDS's pool strings above, see spec Section 15's note to
+// check botController.js directly rather than trust this file to stay in
+// sync with it).
+const SKILL_TIER_ORDER = ["easy", "normal", "hard"];
+
+const DIFFICULTY_OFFSETS = { easy: -1, normal: 0, hard: 1 };
+
+const normalizeDifficulty = (difficulty) =>
+    CAMPAIGN_DIFFICULTIES.includes(difficulty) ? difficulty : "normal";
+
+const normalizeLap = (lap) => (Number.isInteger(lap) && lap >= 1 ? lap : 1);
+
+// Shifts a base band's skill tier by (Campaign Difficulty offset + lap
+// escalation), clamped to SKILL_TIER_ORDER's bounds. Any offset that would
+// have pushed *past* the "hard" ceiling instead narrows the band's own
+// personality pool (spec Section 9) rather than inventing a skill tier that
+// doesn't exist.
+const resolveSkillAndPool = (band, difficulty, lap) => {
+    const baseIndex = SKILL_TIER_ORDER.indexOf(band.skill);
+    const totalOffset = DIFFICULTY_OFFSETS[normalizeDifficulty(difficulty)] + (normalizeLap(lap) - 1);
+    const ceilingIndex = SKILL_TIER_ORDER.length - 1;
+
+    let index = baseIndex + totalOffset;
+    let overflow = 0;
+    if (index > ceilingIndex) {
+        overflow = index - ceilingIndex;
+        index = ceilingIndex;
+    } else if (index < 0) {
+        index = 0;
+    }
+
+    const pool = overflow > 0
+        ? band.pool.slice(0, Math.max(1, band.pool.length - overflow))
+        : band.pool;
+
+    return { skill: SKILL_TIER_ORDER[index], pool };
+};
+
+// Full personality list, used for the Rival fight on Easy/Normal (spec
+// Section 8). Must match botController.js's PERSONALITIES keys - see the
+// SKILL_TIER_ORDER comment above for why this is duplicated rather than
+// imported.
+const RIVAL_FULL_PERSONALITY_POOL = ["turtle", "zoner", "allrounder", "trickster", "rushdown", "berserker", "counter"];
+// Hard Campaign Difficulty narrows the Rival to this aggressive subset from
+// lap 1 onward (spec Section 8); further laps narrow it again (Section 9).
+const RIVAL_HARD_PERSONALITY_POOL = ["berserker", "counter"];
+
+const getRivalBotConfig = (difficulty, lap) => {
+    if (normalizeDifficulty(difficulty) !== "hard") {
+        return { skill: "hard", personality: pickFromPool(RIVAL_FULL_PERSONALITY_POOL) };
+    }
+    const narrowCount = normalizeLap(lap) - 1;
+    const pool = RIVAL_HARD_PERSONALITY_POOL.slice(0, Math.max(1, RIVAL_HARD_PERSONALITY_POOL.length - narrowCount));
+    return { skill: "hard", personality: pickFromPool(pool) };
+};
+
+// ── localStorage persistence (spec Section 13) ──────────────────────────
+// Keyed by character ID within each (difficulty, lap) bucket (never array
+// index/slot number - spec Section 5 point 3), which is what keeps saved
+// progress correctly attached across roster reorders/resizes. Stale
+// characterId entries are simply never surfaced by getLevelSelectData()
+// below, which only ever iterates the CURRENT roster and looks entries up
+// by id - no explicit "delete unknown keys" pass is needed (spec Section 5
+// point 5 / Section 14).
+const emptyLapBucket = () => ({ clearedSlots: {}, rival: { cleared: false, bestStars: 0 } });
+
 const loadProgress = () => {
     let parsed = null;
     try {
@@ -106,9 +176,29 @@ const loadProgress = () => {
     }
 
     const cp = (parsed && typeof parsed === "object" && parsed.campaignProgress) || {};
+    const rawRuns = (cp.runs && typeof cp.runs === "object") ? cp.runs : {};
+
+    // Only ever surface the currently-defined difficulty tiers, each as an
+    // object of lap-number-string -> bucket (spec Section 14's guidance on
+    // an unrecognized difficulty value - just drop it, don't error).
+    const runs = {};
+    CAMPAIGN_DIFFICULTIES.forEach((difficulty) => {
+        const rawLaps = (rawRuns[difficulty] && typeof rawRuns[difficulty] === "object") ? rawRuns[difficulty] : {};
+        const laps = {};
+        Object.keys(rawLaps).forEach((lapKey) => {
+            const lapEntry = rawLaps[lapKey];
+            if (!lapEntry || typeof lapEntry !== "object") return;
+            laps[lapKey] = {
+                clearedSlots: (lapEntry.clearedSlots && typeof lapEntry.clearedSlots === "object") ? lapEntry.clearedSlots : {},
+                rival: (lapEntry.rival && typeof lapEntry.rival === "object") ? lapEntry.rival : { cleared: false, bestStars: 0 },
+            };
+        });
+        runs[difficulty] = laps;
+    });
+
     return {
-        clearedSlots: (cp.clearedSlots && typeof cp.clearedSlots === "object") ? cp.clearedSlots : {},
-        rival: (cp.rival && typeof cp.rival === "object") ? cp.rival : { cleared: false, bestStars: 0 },
+        lastSelectedDifficulty: normalizeDifficulty(cp.lastSelectedDifficulty),
+        runs,
     };
 };
 
@@ -120,36 +210,68 @@ const saveProgress = (progress) => {
     }
 };
 
-// Only ever called on a WIN (spec Section 10 - a loss is always 0 stars and
+const getLapBucket = (progress, difficulty, lap) =>
+    progress.runs[normalizeDifficulty(difficulty)][String(normalizeLap(lap))] || emptyLapBucket();
+
+const setLastSelectedDifficulty = (difficulty) => {
+    const progress = loadProgress();
+    progress.lastSelectedDifficulty = normalizeDifficulty(difficulty);
+    saveProgress(progress);
+};
+
+const getLastSelectedDifficulty = () => loadProgress().lastSelectedDifficulty;
+
+// Which lap is unlocked for a difficulty is derived, never cached (spec
+// Section 13): lap 1 is always available; lap K+1 unlocks once lap K's
+// Rival is cleared.
+const getHighestUnlockedLap = (difficulty) => {
+    const progress = loadProgress();
+    let lap = 1;
+    while (progress.runs[normalizeDifficulty(difficulty)][String(lap)]?.rival?.cleared) {
+        lap += 1;
+    }
+    return lap;
+};
+
+// Only ever called on a WIN (spec Section 12 - a loss is always 0 stars and
 // is never persisted, since 0 can never be a meaningful "best" once any win
-// has happened). Never overwrites a higher previous result.
-const recordSlotClear = (characterId, stars) => {
+// has happened). Never overwrites a higher previous result within the same
+// (difficulty, lap) bucket.
+const recordSlotClear = (difficulty, lap, characterId, stars) => {
     const progress = loadProgress();
-    const existing = progress.clearedSlots[characterId];
+    const lapKey = String(normalizeLap(lap));
+    const normalizedDifficulty = normalizeDifficulty(difficulty);
+    const bucket = progress.runs[normalizedDifficulty][lapKey] || emptyLapBucket();
+    const existing = bucket.clearedSlots[characterId];
     const bestStars = existing ? Math.max(existing.bestStars, stars) : stars;
-    progress.clearedSlots[characterId] = { cleared: true, bestStars };
+    bucket.clearedSlots[characterId] = { cleared: true, bestStars };
+    progress.runs[normalizedDifficulty][lapKey] = bucket;
     saveProgress(progress);
 };
 
-const recordRivalClear = (stars) => {
+const recordRivalClear = (difficulty, lap, stars) => {
     const progress = loadProgress();
-    const bestStars = progress.rival ? Math.max(progress.rival.bestStars || 0, stars) : stars;
-    progress.rival = { cleared: true, bestStars };
+    const lapKey = String(normalizeLap(lap));
+    const normalizedDifficulty = normalizeDifficulty(difficulty);
+    const bucket = progress.runs[normalizedDifficulty][lapKey] || emptyLapBucket();
+    const bestStars = bucket.rival ? Math.max(bucket.rival.bestStars || 0, stars) : stars;
+    bucket.rival = { cleared: true, bestStars };
+    progress.runs[normalizedDifficulty][lapKey] = bucket;
     saveProgress(progress);
 };
 
-// ── Level Select data (spec Sections 5 point 4, 8, 11) ──────────────────
+// ── Level Select data (spec Sections 5 point 4, 10, 13) ─────────────────
 // Recomputed fresh from current roster + saved progress every call - never
 // cached - so it can never go stale if the roster or progress changes
-// between calls (spec Section 11's note about the rival's unlock state in
-// particular).
-const getLevelSelectData = () => {
+// between calls.
+const getLevelSelectData = (difficulty, lap) => {
     const rosterIds = getRosterCharacterIds();
     const progress = loadProgress();
+    const bucket = getLapBucket(progress, difficulty, lap);
 
     let previousSlotCleared = true; // first slot is always unlocked
     const slots = rosterIds.map((characterId, index) => {
-        const entry = progress.clearedSlots[characterId];
+        const entry = bucket.clearedSlots[characterId];
         const cleared = !!(entry && entry.cleared);
         const unlocked = previousSlotCleared;
         previousSlotCleared = cleared;
@@ -163,52 +285,76 @@ const getLevelSelectData = () => {
     });
 
     const allSlotsCleared = rosterIds.length > 0 && rosterIds.every(
-        (id) => progress.clearedSlots[id] && progress.clearedSlots[id].cleared
+        (id) => bucket.clearedSlots[id] && bucket.clearedSlots[id].cleared
     );
 
     const rival = {
         unlocked: allSlotsCleared,
-        cleared: !!progress.rival.cleared,
-        bestStars: progress.rival.bestStars || 0,
+        cleared: !!bucket.rival.cleared,
+        bestStars: bucket.rival.bestStars || 0,
     };
 
     return { slots, rival };
 };
 
-// ── Fight configuration (spec Section 6) ────────────────────────────────
+// Per-tier summary for the Difficulty Select screen (spec Section 8's "e.g.
+// Normal — 6/10 cleared, Rival: not cleared"). Reports each tier's current
+// frontier (its highest-unlocked lap), since that's the most meaningful
+// single snapshot of "how far has the player gotten on this difficulty."
+const getDifficultyOverview = () =>
+    CAMPAIGN_DIFFICULTIES.map((difficulty) => {
+        const lap = getHighestUnlockedLap(difficulty);
+        const { slots, rival } = getLevelSelectData(difficulty, lap);
+        return {
+            difficulty,
+            lap,
+            clearedCount: slots.filter((s) => s.cleared).length,
+            totalSlots: slots.length,
+            rivalCleared: rival.cleared,
+            rivalBestStars: rival.bestStars,
+        };
+    });
+
+// ── Fight configuration (spec Sections 6, 8, 9) ─────────────────────────
 // Pure - just resolves "what will this fight be", used both to preview the
 // opponent on the character-picker step and to actually start the fight.
-const getFightConfig = (kind, slotIndex, playerCharacterId) => {
+const getFightConfig = (kind, slotIndex, playerCharacterId, difficulty, lap) => {
     const rosterIds = getRosterCharacterIds();
+    const normalizedDifficulty = normalizeDifficulty(difficulty);
+    const normalizedLap = normalizeLap(lap);
 
     if (kind === "rival") {
         // Mirror match: opponent is whatever the player just picked. Always
         // hardest skill regardless of the band curve (spec Section 6).
-        // Personality left "random" each attempt for replay variety - see
-        // spec Section 6's note that this isn't load-bearing either way.
+        const { skill, personality } = getRivalBotConfig(normalizedDifficulty, normalizedLap);
         return {
             kind: "rival",
             slotIndex: rosterIds.length,
+            difficulty: normalizedDifficulty,
+            lap: normalizedLap,
             playerCharacterId,
             opponentCharacterId: playerCharacterId,
-            personality: "random",
-            skill: "hard",
+            personality,
+            skill,
         };
     }
 
     const opponentCharacterId = rosterIds[slotIndex];
     const band = getDifficultyBand(slotIndex, rosterIds.length);
+    const { skill, pool } = resolveSkillAndPool(band, normalizedDifficulty, normalizedLap);
     return {
         kind: "slot",
         slotIndex,
+        difficulty: normalizedDifficulty,
+        lap: normalizedLap,
         playerCharacterId,
         opponentCharacterId,
-        personality: pickFromPool(band.pool),
-        skill: band.skill,
+        personality: pickFromPool(pool),
+        skill,
     };
 };
 
-// ── Fight orchestration (spec Sections 4, 9) ────────────────────────────
+// ── Fight orchestration (spec Sections 4, 11) ───────────────────────────
 let currentFightConfig = null;
 
 // Tears down whatever local-sim/bot/render/UI state a campaign fight left
@@ -235,7 +381,18 @@ const startFight = async (config, { onProgress, onMatchEnd } = {}) => {
 
     const players = [
         { socketId: CAMPAIGN_PLAYER_ID, playerIndex: 0, character: config.playerCharacterId, username: "You", isBot: false },
-        { socketId: CAMPAIGN_BOT_ID, playerIndex: 1, character: config.opponentCharacterId, username: "Rival", isBot: true },
+        {
+            socketId: CAMPAIGN_BOT_ID,
+            playerIndex: 1,
+            character: config.opponentCharacterId,
+            // render.js draws this above the opponent's head during the fight
+            // (see its displayName logic) - show the character's actual name
+            // rather than a generic "Rival" label, even for the Rival fight
+            // itself (where the opponent character IS whatever the player
+            // picked, so this still reads correctly).
+            username: getCharacterData(config.opponentCharacterId)?.name || config.opponentCharacterId,
+            isBot: true,
+        },
     ];
     const mapId = getRandomMap().id;
 
@@ -275,7 +432,7 @@ const startFight = async (config, { onProgress, onMatchEnd } = {}) => {
     initializeRender();
 };
 
-// Star rating (spec Section 10). matchEnd's finalStats doesn't carry
+// Star rating (spec Section 12). matchEnd's finalStats doesn't carry
 // maxHealth - derived here via getCharacterData() instead of touching the
 // shared matchEnd payload (which multiplayer also depends on, out of scope
 // per spec Section 2).
@@ -304,9 +461,9 @@ const handleMatchEnd = ({ winner, finalStats }, onMatchEnd) => {
     const fightConfig = currentFightConfig;
     if (won && fightConfig) {
         if (fightConfig.kind === "slot") {
-            recordSlotClear(fightConfig.opponentCharacterId, stars);
+            recordSlotClear(fightConfig.difficulty, fightConfig.lap, fightConfig.opponentCharacterId, stars);
         } else {
-            recordRivalClear(stars);
+            recordRivalClear(fightConfig.difficulty, fightConfig.lap, stars);
         }
     }
 
@@ -325,12 +482,101 @@ const handleMatchEnd = ({ winner, finalStats }, onMatchEnd) => {
 };
 
 export {
+    CAMPAIGN_DIFFICULTIES,
     getRosterCharacterIds,
     getSelectablePlayerCharacterIds,
     getSelectableCharacterIdsForFight,
     isCharacterUnlockedForPlayer,
     getLevelSelectData,
+    getDifficultyOverview,
+    getHighestUnlockedLap,
+    getLastSelectedDifficulty,
+    setLastSelectedDifficulty,
     getFightConfig,
     startFight,
     stopFight,
 };
+
+// ── Testing-only console helpers ────────────────────────────────────────
+// Not part of the spec - purely for manually testing progression (e.g.
+// reaching the Rival on Hard, or a specific New Game+ lap) without playing
+// every fight to get there. Gated behind this codebase's existing debug-mode
+// convention (public/core/debug.js: add ?debug=1 to the URL, or run
+// toggleDebugMode() in devtools) rather than always being live, and only
+// ever writes through the same recordSlotClear()/recordRivalClear() paths a
+// real win would use, so it can't produce a save shape a real playthrough
+// couldn't also produce. Safe to delete this whole block later; nothing
+// else in the file depends on it.
+if (typeof window !== "undefined") {
+    window.campaignDebug = {
+        // Mark every roster slot cleared for one (difficulty, lap) - the
+        // fast path to reaching the Rival fight.
+        clearAllSlots: (stars = 3, difficulty = getLastSelectedDifficulty(), lap = getHighestUnlockedLap(difficulty)) => {
+            if (!isDebugMode()) {
+                debugError("[campaignDebug] Ignored - enable debug mode first (add ?debug=1 to the URL).");
+                return;
+            }
+            getRosterCharacterIds().forEach((characterId) => recordSlotClear(difficulty, lap, characterId, stars));
+            debugLog(`[campaignDebug] Cleared all ${getRosterCharacterIds().length} slots on ${difficulty} lap ${lap} at ${stars} stars.`);
+        },
+
+        // Mark the Rival cleared for one (difficulty, lap) - this is what
+        // actually unlocks the next lap (see getHighestUnlockedLap()), so
+        // pair with clearAllSlots() first if the slots aren't cleared yet.
+        clearRival: (stars = 3, difficulty = getLastSelectedDifficulty(), lap = getHighestUnlockedLap(difficulty)) => {
+            if (!isDebugMode()) {
+                debugError("[campaignDebug] Ignored - enable debug mode first (add ?debug=1 to the URL).");
+                return;
+            }
+            recordRivalClear(difficulty, lap, stars);
+            debugLog(`[campaignDebug] Cleared Rival on ${difficulty} lap ${lap} at ${stars} stars.`);
+        },
+
+        // Both of the above in one call - clears a whole (difficulty, lap)
+        // and leaves the next lap unlocked and ready to test.
+        clearLap: (stars = 3, difficulty = getLastSelectedDifficulty(), lap = getHighestUnlockedLap(difficulty)) => {
+            if (!isDebugMode()) {
+                debugError("[campaignDebug] Ignored - enable debug mode first (add ?debug=1 to the URL).");
+                return;
+            }
+            window.campaignDebug.clearAllSlots(stars, difficulty, lap);
+            window.campaignDebug.clearRival(stars, difficulty, lap);
+        },
+
+        // Repeatedly clears full laps to jump straight to a target lap
+        // number on one difficulty, without playing through the earlier
+        // ones - e.g. campaignDebug.jumpToLap(3, "hard").
+        jumpToLap: (targetLap, difficulty = getLastSelectedDifficulty(), stars = 3) => {
+            if (!isDebugMode()) {
+                debugError("[campaignDebug] Ignored - enable debug mode first (add ?debug=1 to the URL).");
+                return;
+            }
+            let lap = getHighestUnlockedLap(difficulty);
+            while (lap < targetLap) {
+                window.campaignDebug.clearLap(stars, difficulty, lap);
+                lap = getHighestUnlockedLap(difficulty);
+            }
+            debugLog(`[campaignDebug] ${difficulty} is now at lap ${lap}.`);
+        },
+
+        // Wipes all campaign progress (every difficulty, every lap) back to
+        // a fresh save.
+        resetProgress: () => {
+            if (!isDebugMode()) {
+                debugError("[campaignDebug] Ignored - enable debug mode first (add ?debug=1 to the URL).");
+                return;
+            }
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+                debugLog("[campaignDebug] Campaign progress reset.");
+            } catch (error) {
+                debugError("[campaignDebug] Failed to reset progress:", error);
+            }
+        },
+
+        // Prints the raw parsed save data for inspection.
+        dump: () => {
+            debugLog("[campaignDebug] Current progress:", loadProgress());
+        },
+    };
+}
