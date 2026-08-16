@@ -294,10 +294,43 @@ const getNextFightTarget = (prevConfig) => {
     return { kind: "rival", slotIndex: rosterIds.length, difficulty: prevConfig.difficulty, lap: prevConfig.lap };
 };
 
-const showResultScreen = ({ won, stars, config }) => {
+// Same field-name fallback matchEndScreen.js uses for a single stat, kept
+// in sync with it deliberately - both read the same finalStats shape from
+// server/core/gameState.js's matchEnd emit (socketId, character, health,
+// damage, damageReceived, combo, killCount), so both need the same
+// defensive fallbacks in case that shape ever shifts.
+const statValue = (stats, ...keys) => {
+    for (const key of keys) {
+        if (stats && stats[key] !== undefined && stats[key] !== null) {
+            return stats[key];
+        }
+    }
+    return 0;
+};
+
+const combatStatsHtml = (config, playerStats, opponentStats, won) => `
+    <div class="match-stats">
+        <div class="player-stats player1-stats ${won ? "winner" : "loser"}">
+            <div class="player-label">YOU</div>
+            <div class="player-character">${characterName(config.playerCharacterId).toUpperCase()}</div>
+            <div class="stat-row"><span class="stat-label">Damage Dealt:</span><span class="stat-value">${Math.round(statValue(playerStats, "damage", "damageDealt"))}</span></div>
+            <div class="stat-row"><span class="stat-label">Damage Taken:</span><span class="stat-value">${Math.round(statValue(playerStats, "damageReceived", "damageTaken"))}</span></div>
+            <div class="stat-row"><span class="stat-label">Combo Count:</span><span class="stat-value">${statValue(playerStats, "combo", "maxCombo")}</span></div>
+        </div>
+        <div class="player-stats player2-stats ${won ? "loser" : "winner"}">
+            <div class="player-label">OPPONENT</div>
+            <div class="player-character">${characterName(config.opponentCharacterId).toUpperCase()}</div>
+            <div class="stat-row"><span class="stat-label">Damage Dealt:</span><span class="stat-value">${Math.round(statValue(opponentStats, "damage", "damageDealt"))}</span></div>
+            <div class="stat-row"><span class="stat-label">Damage Taken:</span><span class="stat-value">${Math.round(statValue(opponentStats, "damageReceived", "damageTaken"))}</span></div>
+            <div class="stat-row"><span class="stat-label">Combo Count:</span><span class="stat-value">${statValue(opponentStats, "combo", "maxCombo")}</span></div>
+        </div>
+    </div>
+`;
+
+const showResultScreen = ({ won, stars, config, playerStats, opponentStats }) => {
     hideAllCampaignScreens();
 
-    const title = won ? "VICTORY!" : "DEFEAT";
+    const title = won ? "VICTORY" : "DEFEAT";
     const starsHtml = won ? `<div class="campaign-result-stars">${starString(stars)}</div>` : "";
     const nextTarget = won ? getNextFightTarget(config) : null;
 
@@ -308,14 +341,15 @@ const showResultScreen = ({ won, stars, config }) => {
         : "";
 
     resultScreenEl.innerHTML = `
-        <div class="campaign-result-box">
-            <h1 class="title ${won ? "campaign-result-win" : "campaign-result-loss"}">${title}</h1>
+        <div class="result-container ${won ? "victory" : "defeat"}">
+            <div class="result-text ${won ? "victory" : "defeat"}">${title}</div>
             ${starsHtml}
             ${lapUpHtml}
-            <div class="campaign-result-buttons">
-                ${nextTarget ? `<button class="btn btn-small" id="campaign-result-continue">CONTINUE</button>` : ""}
-                <button class="btn btn-small" id="campaign-result-retry">RETRY</button>
-                <button class="btn btn-small" id="campaign-result-exit">EXIT</button>
+            ${combatStatsHtml(config, playerStats, opponentStats, won)}
+            <div class="match-end-buttons">
+                ${nextTarget ? `<button class="match-end-btn rematch-btn" id="campaign-result-continue">CONTINUE</button>` : ""}
+                <button class="match-end-btn retry-btn" id="campaign-result-retry">RETRY</button>
+                <button class="match-end-btn main-menu-btn" id="campaign-result-exit">EXIT</button>
             </div>
         </div>
     `;

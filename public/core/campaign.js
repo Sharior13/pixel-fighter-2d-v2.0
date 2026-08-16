@@ -455,6 +455,7 @@ const handleMatchEnd = ({ winner, finalStats }, onMatchEnd) => {
     stopBot();
 
     const localStats = finalStats.find((p) => p.socketId === CAMPAIGN_PLAYER_ID);
+    const opponentStats = finalStats.find((p) => p.socketId === CAMPAIGN_BOT_ID);
     const won = winner === CAMPAIGN_PLAYER_ID;
     const stars = won ? computeStars(localStats) : 0; // loss -> always 0, never persisted
 
@@ -476,7 +477,12 @@ const handleMatchEnd = ({ winner, finalStats }, onMatchEnd) => {
         setTimeout(() => audioManager.playTitleMusic(), 600);
 
         if (onMatchEnd) {
-            onMatchEnd({ won, stars, config: fightConfig });
+            // playerStats/opponentStats: same finalStats shape multiplayer's
+            // matchEnd payload uses (server/core/gameState.js - socketId,
+            // character, health, damage, damageReceived, combo, killCount),
+            // passed through as-is so campaignUI.js can render the exact same
+            // combat-report fields matchEndScreen.js does after Quick Play.
+            onMatchEnd({ won, stars, config: fightConfig, playerStats: localStats, opponentStats });
         }
     }, 50);
 };
