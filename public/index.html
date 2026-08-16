@@ -21,6 +21,7 @@
         </div>
         <div class="top-buttons">
             <button class="btn btn-large" id="quick-start-btn">Quick Play</button>
+            <button class="btn btn-large" id="single-player-btn">Single Player</button>
             <button class="btn btn-large" id="room-btn">Create / Join Room</button>
         </div>
         <div class="bottom-buttons">
@@ -28,6 +29,18 @@
             <button class="btn btn-small" id="profile-btn">Profile</button>
         </div>
     </div>
+
+    <!-- campaign mode: Difficulty Select (public/ui/campaignUI.js) -->
+    <div id="campaign-difficulty-select" class="hidden campaign-screen"></div>
+
+    <!-- campaign mode: Level Select (public/ui/campaignUI.js) -->
+    <div id="campaign-level-select" class="hidden campaign-screen"></div>
+
+    <!-- campaign mode: per-fight character picker (public/ui/campaignUI.js) -->
+    <div id="campaign-character-picker" class="hidden campaign-screen"></div>
+
+    <!-- campaign mode: post-fight result screen (public/ui/campaignUI.js) -->
+    <div id="campaign-result-screen" class="hidden campaign-screen"></div>
 
     <!-- queuing ui -->
     <div id="queuing"></div>
@@ -103,6 +116,11 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/rukia/rukia-icon.png" alt="Player 1" class="character-image">
         </div>
         <div class="character-name left">RUKIA</div>
+        <div class="dash-bar-wrapper left">
+            <div class="dash-bar-bg" id="dash-bg-p1">
+                <div class="dash-bar-fill" id="dash-p1"></div>
+            </div>
+        </div>
 
         <div class="bars-container left">
             <div class="health-bar-wrapper">
@@ -123,6 +141,11 @@
             <img src="https://cdn.jsdelivr.net/gh/Sharior13/assets-pixel-fighter-2d@main/characters/naruto/naruto-icon.png" alt="Player 2" class="character-image">
         </div>
         <div class="character-name right">Naruto</div>
+        <div class="dash-bar-wrapper right">
+            <div class="dash-bar-bg" id="dash-bg-p2">
+                <div class="dash-bar-fill" id="dash-p2"></div>
+            </div>
+        </div>
 
         <div class="bars-container right">
             <div class="health-bar-wrapper">
@@ -343,6 +366,19 @@
     <div id="rotate-overlay">
         <div class="rotate-icon">⟳</div>
         <p>Rotate your device to landscape<br>for the best experience</p>
+    </div>
+
+    <!-- One-time-per-session full screen prompt (see core/fullscreenGate.js).
+         Desktop/laptop: dismissible via the X, plus a button to go full screen.
+         Mobile/tablet: mandatory (no X) - reuses the same dark overlay + rotate
+         icon treatment as #rotate-overlay above, and also requires landscape
+         orientation before it will let the player continue. -->
+    <div id="fullscreen-gate">
+        <button class="fullscreen-gate-close" id="fullscreen-gate-close" aria-label="Close">&times;</button>
+        <div class="rotate-icon hidden" id="fullscreen-gate-rotate-icon">⟳</div>
+        <p id="fullscreen-gate-message">For the best experience, play in full screen.</p>
+        <p id="fullscreen-gate-rotate-message" class="hidden">Please also rotate your device to landscape.</p>
+        <button class="btn btn-small" id="fullscreen-gate-btn">Enter Full Screen</button>
     </div>
 
     <!-- on-screen touch controls (shown automatically on touch devices) -->

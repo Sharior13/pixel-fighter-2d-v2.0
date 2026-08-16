@@ -294,6 +294,15 @@ const actuallyBeginFight = (match) => {
             localSim: false,
             map: gameState.map,
             gameState: {
+                // Also nested here, not just the top-level `map` field above -
+                // battleUI.js's initialize() reads gameState.map.name to set
+                // the round indicator, and previously only got a `players`
+                // array with no `map` on it, so the indicator silently never
+                // updated for a real PvP match either (it was showing
+                // index.html's unedited default text the whole time). The
+                // top-level `map` field above is still used separately by
+                // setMap() for the background - this doesn't replace that.
+                map: gameState.map,
                 players: gameState.players.map(p => ({
                     socketId: p.socketId,
                     playerIndex: p.playerIndex,
