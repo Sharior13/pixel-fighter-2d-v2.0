@@ -1509,6 +1509,45 @@ body{
             right: 20px;
         }
 
+        /* Dash Cooldown Bar - sits directly under the player name */
+        .dash-bar-wrapper {
+            position: absolute;
+            top: 162px;
+            width: 110px;
+            z-index: 10;
+        }
+
+        .dash-bar-wrapper.left {
+            left: 20px;
+        }
+
+        .dash-bar-wrapper.right {
+            right: 20px;
+        }
+
+        .dash-bar-bg {
+            height: 8px;
+            background: rgba(20, 20, 20, 0.95);
+            border: 2px solid rgba(255, 255, 255, 0.7);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .dash-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #0091b3, #00d4ff);
+            box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.4);
+            transition: width 0.1s linear;
+        }
+
+        /* Glow once dash is off cooldown and ready to use again */
+        .dash-bar-fill.dash-ready {
+            background: linear-gradient(90deg, #00d4ff, #9df7ff);
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.85);
+        }
+
         /* Health and Ultimate Bars Container */
         .bars-container {
             position: absolute;
@@ -1744,7 +1783,7 @@ body{
         }
 
         .burst-challenge-marker.active {
-            animation: burstMarkerSweep var(--burst-duration, 333ms) linear forwards;
+            animation: burstMarkerSweep var(--burst-duration, 900ms) linear forwards;
         }
 
         @keyframes burstMarkerSweep {
@@ -2517,6 +2556,19 @@ body{
         right: 15px;
     }
 
+    .dash-bar-wrapper {
+        top: 132px;
+        width: 90px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 15px;
+    }
+
+    .dash-bar-wrapper.right {
+        right: 15px;
+    }
+
     #health-bg-p1,
     #health-bg-p2 {
         width: clamp(200px, 30vw, 400px);
@@ -2563,6 +2615,19 @@ body{
 
     .character-name.right {
         top: 85px;
+        right: 10px;
+    }
+
+    .dash-bar-wrapper {
+        top: 105px;
+        width: 70px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 10px;
+    }
+
+    .dash-bar-wrapper.right {
         right: 10px;
     }
 
@@ -2644,6 +2709,19 @@ body{
 
     .character-name.right {
         top: 70px;
+        right: 8px;
+    }
+
+    .dash-bar-wrapper {
+        top: 88px;
+        width: 55px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 8px;
+    }
+
+    .dash-bar-wrapper.right {
         right: 8px;
     }
 
@@ -2884,6 +2962,11 @@ body{
     .character-name.left, .character-name.right {
         top: 60px !important;
     }
+
+    .dash-bar-wrapper {
+        top: 78px !important;
+        width: 50px;
+    }
 }
 
 /* ----- Rotate-device overlay -----
@@ -2919,6 +3002,90 @@ body{
     body.in-battle #rotate-overlay {
         display: flex;
     }
+}
+
+/* ----- One-time-per-session full screen gate -----
+   Hidden by default, shown once by core/fullscreenGate.js. Desktop/laptop
+   gets the plain (non-mandatory) look with a close button; the
+   `.mandatory` modifier (added by JS on phones/tablets) reuses the exact
+   dark full-viewport treatment #rotate-overlay uses above and hides the
+   close button, since full screen + landscape are required there, not
+   optional. */
+#fullscreen-gate {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 6000;
+    background: rgba(20, 20, 20, 0.65);
+    color: #fff;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 16px;
+    padding: 20px;
+}
+
+#fullscreen-gate.visible {
+    display: flex;
+}
+
+#fullscreen-gate.mandatory {
+    background: rgba(10, 10, 10, 0.96);
+}
+
+#fullscreen-gate .rotate-icon {
+    font-size: 64px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+#fullscreen-gate p {
+    font-size: clamp(14px, 4vw, 20px);
+    max-width: 340px;
+    line-height: 1.5;
+}
+
+#fullscreen-gate-rotate-message {
+    color: #FFD700;
+    font-weight: bold;
+}
+
+.fullscreen-gate-close {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.7);
+    background: rgba(0, 0, 0, 0.4);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.fullscreen-gate-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+/* Mandatory variant never shows a close button - see core/fullscreenGate.js */
+#fullscreen-gate.mandatory .fullscreen-gate-close {
+    display: none;
+}
+
+/* .btn's own `display: block` (later in this file, same specificity as
+   .hidden) otherwise wins the cascade and the button never actually
+   disappears - these ID-scoped overrides guarantee .hidden wins regardless
+   of source order. */
+#fullscreen-gate-btn.hidden,
+#fullscreen-gate-message.hidden {
+    display: none !important;
 }
 
 /* ----- On-screen touch controls -----

@@ -1,6 +1,12 @@
 import { socket } from "../core/socket.js";
 import { ASSET_BASE_URL } from "../core/config.js";
 import { debugLog, debugWarn, debugError } from "../core/debug.js";
+import { GAME_CONFIG_CLIENT } from "../core/prediction.js";
+
+// Max dash cooldown in ms - server only sends the remaining dashCooldownTimer,
+// not the max, so we pull the true value from the same client-side config
+// prediction.js already uses to mirror the server's dash cooldown.
+const MAX_DASH_COOLDOWN_MS = GAME_CONFIG_CLIENT.dash.cooldown;
 
 class BattleUI {
     constructor() {
@@ -11,6 +17,7 @@ class BattleUI {
         // Player 1 (left) elements
         this.p1HealthBar = document.getElementById('health-p1');
         this.p1UltimateBar = document.getElementById('ultimate-p1');
+        this.p1DashBar = document.getElementById('dash-p1');
         this.p1CharacterImage = document.querySelector('.character-frame.left .character-image');
         this.p1CharacterName = document.querySelector('.character-name.left');
         this.p1ComboDisplay = document.getElementById('combo-p1');
@@ -18,6 +25,7 @@ class BattleUI {
         // Player 2 (right) elements
         this.p2HealthBar = document.getElementById('health-p2');
         this.p2UltimateBar = document.getElementById('ultimate-p2');
+        this.p2DashBar = document.getElementById('dash-p2');
         this.p2CharacterImage = document.querySelector('.character-frame.right .character-image');
         this.p2CharacterName = document.querySelector('.character-name.right');
         this.p2ComboDisplay = document.getElementById('combo-p2');
@@ -105,6 +113,10 @@ class BattleUI {
         this.p1PreviousCombo = 0;
         this.p2PreviousCombo = 0;
         this.burstChallengeWasActive = false;
+
+        // Reset dash bars so a rematch doesn't briefly show the previous match's fill
+        this.updateDashBar(this.p1DashBar, MAX_DASH_COOLDOWN_MS);
+        this.updateDashBar(this.p2DashBar, MAX_DASH_COOLDOWN_MS);
         
         this.show();
         debugLog('[BattleUI] Initialized with local player index:', localPlayer.playerIndex);
@@ -157,10 +169,12 @@ class BattleUI {
         // Update Player 1 (left side) bars
         this.updateHealthBar(this.p1HealthBar, p1.health, p1.maxHealth);
         this.updateUltimateBar(this.p1UltimateBar, p1.cooldowns?.ultimate || 0);
+        this.updateDashBar(this.p1DashBar, p1.dashCooldownTimer || 0);
         
         // Update Player 2 (right side) bars
         this.updateHealthBar(this.p2HealthBar, p2.health, p2.maxHealth);
         this.updateUltimateBar(this.p2UltimateBar, p2.cooldowns?.ultimate || 0);
+        this.updateDashBar(this.p2DashBar, p2.dashCooldownTimer || 0);
 
         // Combo breaker precision challenge (build-order item 7) - only the
         // LOCAL player's own challenge shows; the opponent never sees it.
@@ -245,6 +259,19 @@ class BattleUI {
         }
     }
     
+    updateDashBar(barElement, dashCooldownTimer) {
+        if (!barElement) return;
+
+        // Same shape as updateUltimateBar (server sends only the remaining
+        // cooldown, not the max), but here MAX_DASH_COOLDOWN_MS is the real
+        // value from prediction.js's GAME_CONFIG_CLIENT.dash.cooldown, not a guess.
+        const cooldownPercentage = (dashCooldownTimer / MAX_DASH_COOLDOWN_MS) * 100;
+        const fillPercentage = Math.max(0, Math.min(100, 100 - cooldownPercentage));
+
+        barElement.style.width = fillPercentage + '%';
+        barElement.classList.toggle('dash-ready', fillPercentage >= 100);
+    }
+    
     // ── Combo Breaker / Burst UI (build-order item 7) ──────────────────
     // Mirrors server/core/attackSystem.js's burst timing constants - kept
     // here rather than imported, since there's no shared client/server
@@ -253,9 +280,14 @@ class BattleUI {
     // if those values change: BURST_CHALLENGE_DURATION_FRAMES,
     // BURST_TARGET_START_FRAME, BURST_TARGET_END_FRAME, at 60fps (16.667ms
     // per frame).
-    static BURST_SWEEP_DURATION_MS = 333;  // 20 frames
-    static BURST_TARGET_START_PCT = 30;    // 6 frames / 20 frames
-    static BURST_TARGET_END_PCT = 70;      // 14 frames / 20 frames
+    // Mirrors server/core/attackSystem.js's burst timing constants (widened
+    // significantly per explicit "way more generous" feedback, on top of a
+    // frozen-frame bug fix that made the old window effectively unusable
+    // regardless of tuning - see the notes there). Keep these in sync if
+    // those values change.
+    static BURST_SWEEP_DURATION_MS = 900;  // 54 frames (BURST_CHALLENGE_DURATION_FRAMES)
+    static BURST_TARGET_START_PCT = 3.7;   // 2 frames / 54 frames
+    static BURST_TARGET_END_PCT = 88.9;    // 48 frames / 54 frames
     
     // Handles the rising/falling edge of the LOCAL player's own burst
     // challenge. On the rising edge, positions the target zone, restarts
