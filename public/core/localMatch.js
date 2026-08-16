@@ -138,6 +138,7 @@ const startLocalMatch = ({ roomId: newRoomId, mapId, players, localPlayerId: new
         // same shape actuallyBeginFight() sends for a real match's initial
         // "matchBegin" payload - see server/matchmaking/matchMaking.js
         initialGameState: {
+            map: gameState.map,
             players: gameState.players.map(p => ({
                 socketId: p.socketId,
                 playerIndex: p.playerIndex,
