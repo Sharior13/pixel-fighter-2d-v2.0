@@ -1,14 +1,41 @@
 // Single source of truth for the game's logical gameplay resolution. See
 // docs/single-coordinate-system-migration.md.
 //
-// The simulation, camera, renderer, and battle UI all reason about a fixed
-// 1280x720 (16:9) logical viewport, regardless of the player's actual device
-// resolution. The browser is only responsible for figuring out how large to
-// display that fixed rectangle - it never changes what the game itself
-// thinks its own dimensions are.
-const GAME_WIDTH = 1280;
+// GAME_HEIGHT is a true fixed constant - vertical extent (character size,
+// jump height, hitbox proportions) is identical for every player, always.
+//
+// GAME_WIDTH is NOT a fixed constant - it's a "Hor+" (horizontal-plus)
+// adaptive value, recomputed per session from the player's actual aspect
+// ratio. The goal: fill the player's screen/window edge-to-edge with no
+// letterbox/pillarbox bars whenever their aspect ratio allows it, rather
+// than always centering a fixed 1280-wide box and bar-ing the rest.
+//
+// Why this is safe to vary per-client: the server is fully authoritative
+// for hit detection, movement, and ranges, all expressed in absolute
+// world/map coordinates - it has no concept of any client's viewport size
+// at all (confirmed by grep: zero references to GAME_WIDTH/GAME_HEIGHT/
+// canvas dimensions anywhere under server/). GAME_WIDTH only ever affects
+// how much of the map a given camera can see, never what's actually true
+// in the simulation.
+//
+// The trade-off this doesn't eliminate: a player with a wider effective
+// window genuinely sees a bit more of the arena to their left/right than a
+// player with a narrower one - more advance notice of an approaching
+// opponent. BASE_GAME_WIDTH/MAX_GAME_WIDTH below bound how large that gap
+// can get, rather than removing it - an unbounded per-device FOV would be
+// a much bigger fairness problem than a capped one.
+const BASE_GAME_WIDTH = 1280; // the original fixed design width - GAME_WIDTH
+                               // never goes below this, so nobody ever sees
+                               // LESS of the arena than the original design
+const MAX_GAME_WIDTH = 1600;  // cap on extra width, so an ultra-ultrawide
+                               // monitor can't see dramatically more of the
+                               // arena than everyone else. 1600:720 = 2.22,
+                               // close to a 20:9 phone in landscape - most
+                               // desktop windows and phones fill completely;
+                               // only genuine ultrawide monitors still see a
+                               // (smaller than before) residual pillarbox.
 const GAME_HEIGHT = 720;
-const GAME_ASPECT = GAME_WIDTH / GAME_HEIGHT;
+let GAME_WIDTH = BASE_GAME_WIDTH;
 
 // This module intentionally contains ONLY viewport math + DOM sizing for the
 // canvas/battle-UI layer. No gameplay, camera, combat, or Socket.IO logic
@@ -27,16 +54,12 @@ const GAME_ASPECT = GAME_WIDTH / GAME_HEIGHT;
 // logical viewport" requirement; flag if you'd rather do the actual
 // reparenting instead.
 
-// Nothing in this module is wired into render.js/battleUI.js yet - that
-// happens in Phase 4 (canvas) and Phase 8 (battle UI), each verified on its
-// own. Importing this file still has zero effect on current behavior.
-
 /**
- * How much display area is available to letterbox/pillarbox the logical
- * viewport into. Uses the window's own viewport size - the existing
- * orientation-lock gate (fullscreenGate.js) is left completely untouched;
- * this module only needs to work correctly once that gate already considers
- * the device to be in its supported landscape state.
+ * How much display area is available to fit the logical viewport into.
+ * Uses the window's own viewport size - the existing orientation-lock gate
+ * (fullscreenGate.js) is left completely untouched; this module only needs
+ * to work correctly once that gate already considers the device to be in
+ * its supported landscape state.
  */
 const getAvailableSize = () => ({
     width: window.innerWidth,
@@ -44,12 +67,35 @@ const getAvailableSize = () => ({
 });
 
 /**
- * Given the available display area, computes how big the logical
- * GAME_WIDTH x GAME_HEIGHT rectangle should be drawn, and the offsets
- * needed to center it (letterboxing when the container is relatively
- * taller than 16:9, pillarboxing when it's relatively wider).
+ * Computes this session's effective GAME_WIDTH from the available display
+ * area (Hor+): the width, in logical units, that exactly fills availWidth
+ * once availHeight is scaled to exactly fill GAME_HEIGHT - i.e. "how much
+ * of the arena, at a fixed vertical scale, does this aspect ratio show with
+ * zero bars" - clamped to [BASE_GAME_WIDTH, MAX_GAME_WIDTH].
+ *
+ * Falling outside that range means: aspect ratio is narrower than 16:9
+ * (idealWidth < BASE_GAME_WIDTH) -> GAME_WIDTH stays pinned at
+ * BASE_GAME_WIDTH and the game letterboxes (bars top/bottom) exactly like
+ * the original fixed-1280 design, since we never want to show less than
+ * that. Or aspect ratio is wider than MAX_GAME_WIDTH allows -> GAME_WIDTH
+ * pins at the cap and the game pillarboxes (bars left/right), bounding how
+ * much extra the widest screens can see.
+ */
+const computeEffectiveGameWidth = (availWidth, availHeight) => {
+    const idealWidth = availWidth * (GAME_HEIGHT / availHeight);
+    return Math.min(MAX_GAME_WIDTH, Math.max(BASE_GAME_WIDTH, idealWidth));
+};
+
+/**
+ * Given the available display area, recomputes this session's GAME_WIDTH
+ * (Hor+, see above) and how big the resulting GAME_WIDTH x GAME_HEIGHT
+ * rectangle should be drawn, plus the offsets needed to center it (only
+ * non-zero once GAME_WIDTH has been clamped to one of its bounds - see
+ * computeEffectiveGameWidth).
  */
 const computeViewportRect = (availWidth, availHeight) => {
+    GAME_WIDTH = computeEffectiveGameWidth(availWidth, availHeight);
+
     const scale = Math.min(availWidth / GAME_WIDTH, availHeight / GAME_HEIGHT);
 
     const width = GAME_WIDTH * scale;
@@ -63,7 +109,7 @@ const computeViewportRect = (availWidth, availHeight) => {
 
 // Last computed rect, kept so screenToLogical() can convert a pointer event
 // without needing every caller to re-derive it.
-let currentRect = computeViewportRect(GAME_WIDTH, GAME_HEIGHT);
+let currentRect = computeViewportRect(BASE_GAME_WIDTH, GAME_HEIGHT);
 
 const getCurrentRect = () => currentRect;
 
@@ -73,8 +119,9 @@ const getCurrentRect = () => currentRect;
  * this is what keeps the canvas and battle UI in visual sync (doc section
  * 11) without requiring them to share a DOM parent (see design note above).
  * Does NOT touch canvas.width/canvas.height (the canvas's internal/logical
- * resolution) - only CSS display geometry. Internal resolution is set once,
- * in Phase 4.
+ * resolution) - only CSS display geometry. render.js is responsible for
+ * keeping canvas.width/height in sync with GAME_WIDTH/GAME_HEIGHT, since
+ * GAME_WIDTH can now change on any resize (Hor+), not just once at startup.
  */
 const applySizing = (elements, rect) => {
     for (const el of elements) {
@@ -107,7 +154,8 @@ const clearSizing = (elements) => {
 };
 
 /**
- * Recomputes the viewport rect from the current window size, applies it to
+ * Recomputes the viewport rect (and this session's GAME_WIDTH, see
+ * computeEffectiveGameWidth) from the current window size, applies it to
  * the given elements, and returns the rect (also cached for
  * getCurrentRect()/screenToLogical()).
  */
@@ -120,12 +168,12 @@ const updateViewport = (elements = []) => {
 
 /**
  * Converts a physical pointer coordinate (e.g. event.clientX/clientY) into
- * logical 1280x720 game coordinates, using the last-computed viewport rect.
- * See migration doc sections 20-21. (Audit note: this codebase currently has
- * no gameplay code that consumes pointer/touch coordinates - input.js is
- * keyboard-only and touchControls.js dispatches synthetic key events - so
- * nothing calls this yet. Provided for completeness/future use per the
- * module's stated responsibilities.)
+ * logical GAME_WIDTH x GAME_HEIGHT game coordinates, using the
+ * last-computed viewport rect. See migration doc sections 20-21. (Audit
+ * note: this codebase currently has no gameplay code that consumes
+ * pointer/touch coordinates - input.js is keyboard-only and touchControls.js
+ * dispatches synthetic key events - so nothing calls this yet. Provided for
+ * completeness/future use per the module's stated responsibilities.)
  */
 const screenToLogical = (clientX, clientY, rect = currentRect) => {
     const logicalX = ((clientX - rect.offsetX) / rect.scale);
@@ -156,9 +204,11 @@ const onResize = (elements, callback) => {
 
 export {
     GAME_WIDTH,
+    BASE_GAME_WIDTH,
+    MAX_GAME_WIDTH,
     GAME_HEIGHT,
-    GAME_ASPECT,
     getAvailableSize,
+    computeEffectiveGameWidth,
     computeViewportRect,
     getCurrentRect,
     applySizing,

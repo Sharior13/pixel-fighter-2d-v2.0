@@ -26,15 +26,21 @@ let currentMap = null;
 let bgImg = null;
 let lastFrameTime = performance.now();
 
-// Logical/internal resolution - fixed regardless of device, instead of
-// tracking window.innerWidth/innerHeight directly (see docs/single-coordinate-
-// system-migration.md). Everything downstream in this file that draws to the
-// canvas or does camera math (clear/fill rects, the debug crosshair, camera
-// follow/bounds, etc.) reads GAME_WIDTH/GAME_HEIGHT directly rather than
-// canvas.width/canvas.height, so it's unaffected by however large the canvas
-// is actually displayed on screen.
-canvas.width = GAME_WIDTH;
-canvas.height = GAME_HEIGHT;
+// Logical/internal resolution. GAME_HEIGHT is fixed; GAME_WIDTH is a
+// per-session adaptive value (Hor+, see viewport.js) that can change on any
+// resize, not just once at startup - so canvas.width/height have to be
+// re-synced every time the viewport is recomputed, not set once here and
+// forgotten (see syncCanvasResolution below, called from
+// enterGameplayViewport() and its resize handler). Everything downstream in
+// this file that draws to the canvas or does camera math (clear/fill rects,
+// the debug crosshair, camera follow/bounds, etc.) reads GAME_WIDTH/
+// GAME_HEIGHT directly rather than canvas.width/canvas.height, so it always
+// reflects whatever GAME_WIDTH currently is.
+const syncCanvasResolution = () => {
+    canvas.width = GAME_WIDTH;
+    canvas.height = GAME_HEIGHT;
+};
+syncCanvasResolution();
 
 // The background <img> (see setMap()) is a real DOM element, not something
 // drawn on the canvas, so it doesn't automatically follow the canvas's CSS
@@ -51,9 +57,30 @@ const sizeBackgroundImage = () => {
 
 const positionBackgroundImage = () => {
     if (!bgImg || !currentMap) return;
-    const { scale, offsetX, offsetY } = getCurrentRect();
-    bgImg.style.left = (offsetX - camera.x * scale) + 'px';
-    bgImg.style.top = (offsetY - camera.y * scale) + 'px';
+    const { scale, offsetX, offsetY, width, height } = getCurrentRect();
+    const bgLeft = offsetX - camera.x * scale;
+    const bgTop = offsetY - camera.y * scale;
+    bgImg.style.left = bgLeft + 'px';
+    bgImg.style.top = bgTop + 'px';
+
+    // bgImg is sized to the full map (see sizeBackgroundImage above), which
+    // is normally much larger than the canvas's own on-screen box - so
+    // without clipping, it overflows past the canvas into the surrounding
+    // letterbox area, visually papering over those bars while there's still
+    // map content left to show. It runs out of content to paper over them
+    // with right at the true map edges, which looks like a letterbox bar
+    // suddenly "appearing" there, when really it was there the whole time.
+    // Clipping bgImg to exactly the canvas's rect keeps the letterbox a
+    // stable, constant border instead of something that flickers in and out
+    // based on camera position. clip-path's inset() is relative to bgImg's
+    // OWN box, so these are distances from bgImg's edges to canvas's edges.
+    const clipTop = Math.max(0, offsetY - bgTop);
+    const clipLeft = Math.max(0, offsetX - bgLeft);
+    const bgWidth = currentMap.width * scale;
+    const bgHeight = currentMap.height * scale;
+    const clipRight = Math.max(0, (bgLeft + bgWidth) - (offsetX + width));
+    const clipBottom = Math.max(0, (bgTop + bgHeight) - (offsetY + height));
+    bgImg.style.clipPath = `inset(${clipTop}px ${clipRight}px ${clipBottom}px ${clipLeft}px)`;
 };
 
 // CSS/display sizing is a separate concern from the internal resolution
@@ -78,7 +105,24 @@ let unsubscribeGameplayResize = null;
 const enterGameplayViewport = () => {
     if (unsubscribeGameplayResize) return; // already active
     updateViewport([canvas, gameContainer]);
+    // updateViewport() above just recomputed GAME_WIDTH (Hor+) for this
+    // device - canvas.width/height need to match it exactly, or the canvas
+    // renders at a stale resolution the CSS box no longer agrees with.
+    syncCanvasResolution();
+    // bgImg may already exist (setMap() can run before we ever get here -
+    // e.g. map data arrives during the loading screen, before battleUI.show()
+    // adds 'in-battle') and would have been sized/positioned using whatever
+    // scale was current at that earlier moment, which is not necessarily
+    // this device's real scale. Resync it now that updateViewport() above
+    // has the correct, current rect.
+    if (bgImg && currentMap) {
+        sizeBackgroundImage();
+        positionBackgroundImage();
+    }
     unsubscribeGameplayResize = onResize([canvas, gameContainer], () => {
+        // GAME_WIDTH (Hor+) can change again on this resize too - e.g. the
+        // player resizes their browser window mid-session.
+        syncCanvasResolution();
         if (bgImg && currentMap) {
             sizeBackgroundImage();
             positionBackgroundImage();
