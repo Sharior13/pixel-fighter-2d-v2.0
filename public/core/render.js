@@ -7,9 +7,17 @@ import { getPlayerUsername } from "../ui/titleScreen.js";
 import { audioManager } from "./audioManager.js";
 import { simulateTick } from "./prediction.js";
 import { debugLog, debugWarn, isDebugMode } from "./debug.js";
+import { GAME_WIDTH, GAME_HEIGHT, updateViewport, clearSizing, onResize, getCurrentRect } from "./viewport.js";
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+
+// The battle HUD overlay - see public/ui/battleUI.js, which holds this same
+// reference. Sized/positioned identically to the canvas below, so the two
+// share exactly one logical rectangle (doc section 11: "Both Canvas and
+// Battle UI must occupy the same logical rectangle. This is extremely
+// important.").
+const gameContainer = document.querySelector('.game-container');
 
 let isRendering = false;
 let currentGameState = null;
@@ -18,20 +26,129 @@ let currentMap = null;
 let bgImg = null;
 let lastFrameTime = performance.now();
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-//resize canvas on window resize
-window.addEventListener('resize', ()=>{
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    // bgImg/currentMap are only set once a match actually loads a map - on first
-    // page load (or any time we're sitting at a menu with no map loaded), a
-    // browser-fired resize event would otherwise throw here.
-    if(bgImg && currentMap){
-        bgImg.style.width = currentMap.width + 'px';
-        bgImg.style.height = currentMap.height + 'px';
+// Logical/internal resolution. GAME_HEIGHT is fixed; GAME_WIDTH is a
+// per-session adaptive value (Hor+, see viewport.js) that can change on any
+// resize, not just once at startup - so canvas.width/height have to be
+// re-synced every time the viewport is recomputed, not set once here and
+// forgotten (see syncCanvasResolution below, called from
+// enterGameplayViewport() and its resize handler). Everything downstream in
+// this file that draws to the canvas or does camera math (clear/fill rects,
+// the debug crosshair, camera follow/bounds, etc.) reads GAME_WIDTH/
+// GAME_HEIGHT directly rather than canvas.width/canvas.height, so it always
+// reflects whatever GAME_WIDTH currently is.
+const syncCanvasResolution = () => {
+    canvas.width = GAME_WIDTH;
+    canvas.height = GAME_HEIGHT;
+};
+syncCanvasResolution();
+
+// The background <img> (see setMap()) is a real DOM element, not something
+// drawn on the canvas, so it doesn't automatically follow the canvas's CSS
+// scale - its own size/position have to be multiplied by the same scale
+// (and offset by the same letterbox amount) as the canvas, or it drifts out
+// of sync with everything actually drawn on the canvas. See migration doc
+// "Phase 4a - Convert the DOM Background-Image Element".
+const sizeBackgroundImage = () => {
+    if (!bgImg || !currentMap) return;
+    const { scale } = getCurrentRect();
+    bgImg.style.width = (currentMap.width * scale) + 'px';
+    bgImg.style.height = (currentMap.height * scale) + 'px';
+};
+
+const positionBackgroundImage = () => {
+    if (!bgImg || !currentMap) return;
+    const { scale, offsetX, offsetY, width, height } = getCurrentRect();
+    const bgLeft = offsetX - camera.x * scale;
+    const bgTop = offsetY - camera.y * scale;
+    bgImg.style.left = bgLeft + 'px';
+    bgImg.style.top = bgTop + 'px';
+
+    // bgImg is sized to the full map (see sizeBackgroundImage above), which
+    // is normally much larger than the canvas's own on-screen box - so
+    // without clipping, it overflows past the canvas into the surrounding
+    // letterbox area, visually papering over those bars while there's still
+    // map content left to show. It runs out of content to paper over them
+    // with right at the true map edges, which looks like a letterbox bar
+    // suddenly "appearing" there, when really it was there the whole time.
+    // Clipping bgImg to exactly the canvas's rect keeps the letterbox a
+    // stable, constant border instead of something that flickers in and out
+    // based on camera position. clip-path's inset() is relative to bgImg's
+    // OWN box, so these are distances from bgImg's edges to canvas's edges.
+    const clipTop = Math.max(0, offsetY - bgTop);
+    const clipLeft = Math.max(0, offsetX - bgLeft);
+    const bgWidth = currentMap.width * scale;
+    const bgHeight = currentMap.height * scale;
+    const clipRight = Math.max(0, (bgLeft + bgWidth) - (offsetX + width));
+    const clipBottom = Math.max(0, (bgTop + bgHeight) - (offsetY + height));
+    bgImg.style.clipPath = `inset(${clipTop}px ${clipRight}px ${clipBottom}px ${clipLeft}px)`;
+};
+
+// CSS/display sizing is a separate concern from the internal resolution
+// above (doc section 8) - viewport.js computes how large the logical
+// GAME_WIDTH x GAME_HEIGHT rectangle should be drawn (letterboxed/
+// pillarboxed to preserve aspect ratio) and applies that as CSS geometry
+// only.
+//
+// This ONLY applies while an actual battle is on screen. Outside of a
+// battle - title screen, matchmaking/queuing, character select, loading -
+// the canvas is a full-bleed decorative background (see showTitleScreen()
+// in titleScreen.js setting canvas.style.backgroundImage), not the gameplay
+// viewport, and must stay untouched by this (doc section 14: menus keep
+// their existing responsive behavior, they are not forced into the logical
+// game coordinate system). document.body's 'in-battle' class is the
+// existing signal for "a battle is actually visible right now" - see
+// battleUI.js's show()/hide() and touchControls.js's own use of the same
+// class - so this reuses it instead of introducing a second, separate
+// notion of "are we in gameplay".
+let unsubscribeGameplayResize = null;
+
+const enterGameplayViewport = () => {
+    if (unsubscribeGameplayResize) return; // already active
+    updateViewport([canvas, gameContainer]);
+    // updateViewport() above just recomputed GAME_WIDTH (Hor+) for this
+    // device - canvas.width/height need to match it exactly, or the canvas
+    // renders at a stale resolution the CSS box no longer agrees with.
+    syncCanvasResolution();
+    // bgImg may already exist (setMap() can run before we ever get here -
+    // e.g. map data arrives during the loading screen, before battleUI.show()
+    // adds 'in-battle') and would have been sized/positioned using whatever
+    // scale was current at that earlier moment, which is not necessarily
+    // this device's real scale. Resync it now that updateViewport() above
+    // has the correct, current rect.
+    if (bgImg && currentMap) {
+        sizeBackgroundImage();
+        positionBackgroundImage();
     }
-});
+    unsubscribeGameplayResize = onResize([canvas, gameContainer], () => {
+        // GAME_WIDTH (Hor+) can change again on this resize too - e.g. the
+        // player resizes their browser window mid-session.
+        syncCanvasResolution();
+        if (bgImg && currentMap) {
+            sizeBackgroundImage();
+            positionBackgroundImage();
+        }
+    });
+};
+
+const exitGameplayViewport = () => {
+    if (unsubscribeGameplayResize) {
+        unsubscribeGameplayResize();
+        unsubscribeGameplayResize = null;
+    }
+    clearSizing([canvas, gameContainer]);
+};
+
+const syncGameplayViewportToBattleState = () => {
+    if (document.body.classList.contains('in-battle')) {
+        enterGameplayViewport();
+    } else {
+        exitGameplayViewport();
+    }
+};
+
+new MutationObserver(syncGameplayViewportToBattleState)
+    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+syncGameplayViewportToBattleState(); // reflect current state immediately
 
 
 let showKOOverlay = false;
@@ -114,13 +231,11 @@ const setMap = (mapData)=>{
         bgImg = document.createElement('img');
         bgImg.id = 'bgImage';
         bgImg.style.position = 'absolute';
-        bgImg.style.top = '0px';
-        bgImg.style.left = '0px';
-        bgImg.style.width = currentMap.width + 'px';
-        bgImg.style.height = currentMap.height + 'px';
         bgImg.style.zIndex = '-2';
         bgImg.style.pointerEvents = 'none';
         bgImg.style.imageRendering = 'pixelated';
+        sizeBackgroundImage();
+        positionBackgroundImage();
 
         bgImg.onload = ()=>{
             debugLog(`[Render] Background image loaded for: ${currentMap.name}`);
@@ -448,7 +563,7 @@ const stopRender = ()=>{
     animationStateManager.clear();
     spriteManager.clear();
     
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
     debugLog("Render stopped");
 };
 
@@ -462,13 +577,13 @@ const initializeRender = ()=>{
     
     const drawBackground = ()=>{
         if(currentMap && bgImg){
-            //move the <img> element opposite to camera so it scrolls with the world
-            bgImg.style.left = (-camera.x) + 'px';
-            bgImg.style.top = (-camera.y) + 'px';
+            //move the <img> element opposite to camera (scaled to match the
+            //canvas's current display size) so it scrolls with the world
+            positionBackgroundImage();
         } else if(currentMap){
             //fill with solid color if no image
             ctx.fillStyle = currentMap.backgroundColor || "#1a1a2e";
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
         }
     };
     
@@ -503,14 +618,14 @@ const initializeRender = ()=>{
         const leftX = currentMap.boundaries.left - camera.x;
         ctx.beginPath();
         ctx.moveTo(leftX, 0);
-        ctx.lineTo(leftX, canvas.height);
+        ctx.lineTo(leftX, GAME_HEIGHT);
         ctx.stroke();
         
         //right boundary
         const rightX = currentMap.boundaries.right - camera.x;
         ctx.beginPath();
         ctx.moveTo(rightX, 0);
-        ctx.lineTo(rightX, canvas.height);
+        ctx.lineTo(rightX, GAME_HEIGHT);
         ctx.stroke();
         
         ctx.setLineDash([]);
@@ -529,20 +644,20 @@ const initializeRender = ()=>{
         //check if opponent is within viewport
         const opponentVisible = (
             opponent.position.x >= camera.x && 
-            opponent.position.x <= camera.x + canvas.width && 
+            opponent.position.x <= camera.x + GAME_WIDTH && 
             opponent.position.y >= camera.y && 
-            opponent.position.y <= camera.y + canvas.height
+            opponent.position.y <= camera.y + GAME_HEIGHT
         );
 
         let targetX, targetY;
         if(opponentVisible){
             //center on midpoint if both visible
-            targetX = (localPlayer.position.x + opponent.position.x) / 2 - canvas.width / 2;
-            targetY = (localPlayer.position.y + opponent.position.y) / 2 - canvas.height / 2;
+            targetX = (localPlayer.position.x + opponent.position.x) / 2 - GAME_WIDTH / 2;
+            targetY = (localPlayer.position.y + opponent.position.y) / 2 - GAME_HEIGHT / 2;
         } else {
             //follow local player if no opponent
-            targetX = localPlayer.position.x - canvas.width / 2;
-            targetY = localPlayer.position.y - canvas.height / 2;
+            targetX = localPlayer.position.x - GAME_WIDTH / 2;
+            targetY = localPlayer.position.y - GAME_HEIGHT / 2;
         }
 
         //smooth follow
@@ -550,8 +665,8 @@ const initializeRender = ()=>{
         camera.y += (targetY - camera.y) * 0.1;
 
         //clamp to map boundary
-        camera.x = Math.max(0, Math.min(camera.x, currentMap.width - canvas.width));
-        camera.y = Math.max(0, Math.min(camera.y, currentMap.height - canvas.height));
+        camera.x = Math.max(0, Math.min(camera.x, currentMap.width - GAME_WIDTH));
+        camera.y = Math.max(0, Math.min(camera.y, currentMap.height - GAME_HEIGHT));
 
         //reduce camera blur
         camera.x = Math.round(camera.x);
@@ -562,12 +677,12 @@ const initializeRender = ()=>{
         ctx.beginPath();
         ctx.strokeStyle = "red";
         
-        ctx.moveTo(canvas.width/2, 0);
-        ctx.lineTo(canvas.width/2, canvas.height);
+        ctx.moveTo(GAME_WIDTH/2, 0);
+        ctx.lineTo(GAME_WIDTH/2, GAME_HEIGHT);
         ctx.stroke();
         
-        ctx.moveTo(0, canvas.height/2);
-        ctx.lineTo(canvas.width, canvas.height/2);
+        ctx.moveTo(0, GAME_HEIGHT/2);
+        ctx.lineTo(GAME_WIDTH, GAME_HEIGHT/2);
         ctx.stroke();
         
         ctx.closePath();
@@ -767,7 +882,7 @@ const initializeRender = ()=>{
         
         //darken background
         ctx.fillStyle = `rgba(0, 0, 0, ${0.7 * (1 - progress * 0.5)})`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
         
         //calculate scale and opacity for KO text
         const scalePhase1 = Math.min(elapsed / 300, 1); //scale in over 300ms
@@ -778,7 +893,7 @@ const initializeRender = ()=>{
         
         //draw "KO" text
         ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.translate(GAME_WIDTH / 2, GAME_HEIGHT / 2);
         ctx.scale(scale, scale);
         
         //outer glow
@@ -809,7 +924,7 @@ const initializeRender = ()=>{
         const deltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
 
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
         
         if(!currentGameState || !currentGameState.players){
             return;
