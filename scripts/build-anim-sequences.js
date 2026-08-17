@@ -123,6 +123,26 @@ function generateFrameSequence(artFrames, frameCounts) {
     return sequence;
 }
 
+// Animation-key -> move-key translation, needed because sprite.animations
+// uses 'attack_basic'/'attack_special'/'attack_ultimate' as keys (matching
+// what animationStateManager.js targets), while ATTACK_CONFIG (and
+// player.currentAttack) use the underlying move IDs 'basic'/'special'/
+// 'ultimate' instead - attack1/attack2 don't need translating, they're
+// already the same in both namespaces. This mirrors
+// AnimationStateManager.ATTACK_MAP in public/core/animationStateManager.js
+// (inverted) - that map is browser-ESM-only and this script runs server-side
+// CommonJS at build time, so it can't be required directly; if ATTACK_MAP
+// ever changes, update this too.
+const ANIMATION_KEY_TO_MOVE_KEY = {
+    attack_basic: "basic",
+    attack_special: "special",
+    attack_ultimate: "ultimate",
+};
+
+function resolveMoveId(moveId) {
+    return ANIMATION_KEY_TO_MOVE_KEY[moveId] || moveId;
+}
+
 // Walk every character's authored sprite.animations, generating a
 // frameSequence for each entry that opts into tick-sequence sync (has both
 // syncMode: 'tick-sequence' and an artFrames spec). Animations without
@@ -147,12 +167,13 @@ function buildAnimSequences() {
                 );
             }
 
-            const frameCounts = ATTACK_CONFIG[characterId] && ATTACK_CONFIG[characterId][moveId];
+            const frameCounts = ATTACK_CONFIG[characterId] && ATTACK_CONFIG[characterId][resolveMoveId(moveId)];
             if (!frameCounts) {
                 throw new Error(
                     `[build-anim-sequences] ${characterId}.${moveId}: has an artFrames spec but no matching ` +
-                    `entry in ATTACK_CONFIG - tick-sequence animations must correspond to a real attack move ` +
-                    `(this mode reads its per-tick timing straight from combat data, it has nothing else to go on).`
+                    `entry in ATTACK_CONFIG (looked up as '${resolveMoveId(moveId)}') - tick-sequence animations ` +
+                    `must correspond to a real attack move (this mode reads its per-tick timing straight from ` +
+                    `combat data, it has nothing else to go on).`
                 );
             }
 

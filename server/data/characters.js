@@ -175,20 +175,44 @@ const CHARACTERS = {
             },
 
             animations: {
-                idle: { sheet: 'main', startFrame: 0, frames: 6, frameDelay: 150, loop: true, row: 0 },
-                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0 },
-                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0 },
-                jump: { sheet: 'jump', startFrame: 0, frames: 9, frameDelay: 100, loop: false, row: 0 },
-                fall: { sheet: 'jump', startFrame: 4, frames: 5, frameDelay: 100, loop: true, row: 0 },
-                attack1: { sheet: 'attack1', startFrame: 0, frames: 7, frameDelay: 80, loop: false, row: 0 },
-                attack2: { sheet: 'attack2', startFrame: 0, frames: 8, frameDelay: 80, loop: false, row: 0 },
-                attack_basic: { sheet: 'attack_basic', startFrame: 0, frames: 3, frameDelay: 100, loop: false, row: 0 },
-                attack_special: { sheet: 'attack_special', startFrame: 0, frames: 9, frameDelay: 100, loop: false, row: 0 },
-                attack_ultimate: { sheet: 'attack_ultimate', startFrame: 0, frames: 10, frameDelay: 120, loop: false, row: 0 },
-                hit: { sheet: 'hit', startFrame: 0, frames: 4, frameDelay: 80, loop: false, row: 0 },
-                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0 },
-                victory: { sheet: 'victory', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0 },
-                defeat: { sheet: 'defeat', startFrame: 0, frames: 4, frameDelay: 150, loop: false, row: 0 }
+                idle: { sheet: 'main', startFrame: 0, frames: 6, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0, syncMode: 'loop' },
+                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0, syncMode: 'loop' },
+                // jump+fall consolidated into one transition-loop entry (see
+                // animation-engine-refactor-spec.md) - determineTargetAnimation
+                // in animationStateManager.js only ever targets 'jump' for any
+                // airborne state already, it never separately targeted 'fall',
+                // so this is a pure schema change with no state-manager impact.
+                jump: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'jump', startFrame: 0, frames: 9, frameDelay: 100, loop: false, row: 0 },
+                    hold: { sheet: 'jump', startFrame: 4, frames: 5, frameDelay: 100, loop: true, row: 0 }
+                },
+                // artFrames below are PLACEHOLDER/grey-box splits of the existing
+                // sheet's frame count (see spec's suggested order, item 5) - real
+                // per-phase weighting (more unique frames on startup/active, fewer
+                // on recovery) happens once real Blender art replaces these sheets.
+                // The actual per-tick frameSequence is generated at build time
+                // (scripts/build-anim-sequences.js) from these plus this character's
+                // real startupFrames/activeFrames/recoveryFrames - see ATTACK_CONFIG.
+                attack1: { syncMode: 'tick-sequence', sheet: 'attack1', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4], recovery: [5, 6] } },
+                attack2: { syncMode: 'tick-sequence', sheet: 'attack2', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7] } },
+                attack_basic: { syncMode: 'tick-sequence', sheet: 'attack_basic', row: 0, artFrames: { startup: [0], active: [1], recovery: [2] } },
+                attack_special: { syncMode: 'tick-sequence', sheet: 'attack_special', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7, 8] } },
+                attack_ultimate: { syncMode: 'tick-sequence', sheet: 'attack_ultimate', row: 0, artFrames: { startup: [0, 1, 2, 3], active: [4, 5, 6], recovery: [7, 8, 9] } },
+                // placeholder intro/hold split of the existing 4-frame hit sheet:
+                // frames 0-2 play once as the impact reaction, frame 3 holds/loops
+                // as the stunned sway for however long hitstun actually lasts (see
+                // spec: hitstun is combo-scaled, 300ms-1500ms, so this can't be a
+                // fixed-length clip the way the old flat 4-frame hit animation was).
+                hit: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'hit', startFrame: 0, frames: 3, frameDelay: 80, loop: false, row: 0 },
+                    hold: { sheet: 'hit', startFrame: 3, frames: 1, frameDelay: 80, loop: true, row: 0 }
+                },
+                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0, syncMode: 'one-shot' },
+                victory: { sheet: 'victory', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                defeat: { sheet: 'defeat', startFrame: 0, frames: 4, frameDelay: 150, loop: false, row: 0, syncMode: 'one-shot' }
             }
         }
     },
@@ -298,20 +322,27 @@ const CHARACTERS = {
             },
 
             animations: {
-                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0 },
-                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0 },
-                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0 },
-                jump: { sheet: 'jump', startFrame: 0, frames: 6, frameDelay: 100, loop: false, row: 0 },
-                fall: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 },
-                attack1: { sheet: 'attack1', startFrame: 0, frames: 6, frameDelay: 80, loop: false, row: 0 },
-                attack2: { sheet: 'attack2', startFrame: 0, frames: 9, frameDelay: 80, loop: false, row: 0 },
-                attack_basic: { sheet: 'attack_basic', startFrame: 0, frames: 6, frameDelay: 100, loop: false, row: 0 },
-                attack_special: { sheet: 'attack_special', startFrame: 0, frames: 15, frameDelay: 80, loop: false, row: 0 },
-                attack_ultimate: { sheet: 'attack_ultimate', startFrame: 0, frames: 15, frameDelay: 80, loop: false, row: 0 },
-                hit: { sheet: 'hit', startFrame: 0, frames: 4, frameDelay: 80, loop: false, row: 0 },
-                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0 },
-                victory: { sheet: 'victory', startFrame: 0, frames: 6, frameDelay: 150, loop: false, row: 0 },
-                defeat: { sheet: 'defeat', startFrame: 0, frames: 5, frameDelay: 150, loop: false, row: 0 }
+                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0, syncMode: 'loop' },
+                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0, syncMode: 'loop' },
+                jump: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'jump', startFrame: 0, frames: 6, frameDelay: 100, loop: false, row: 0 },
+                    hold: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 }
+                },
+                attack1: { syncMode: 'tick-sequence', sheet: 'attack1', row: 0, artFrames: { startup: [0, 1], active: [2, 3], recovery: [4, 5] } },
+                attack2: { syncMode: 'tick-sequence', sheet: 'attack2', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7, 8] } },
+                attack_basic: { syncMode: 'tick-sequence', sheet: 'attack_basic', row: 0, artFrames: { startup: [0, 1], active: [2, 3], recovery: [4, 5] } },
+                attack_special: { syncMode: 'tick-sequence', sheet: 'attack_special', row: 0, artFrames: { startup: [0, 1, 2, 3, 4], active: [5, 6, 7, 8, 9], recovery: [10, 11, 12, 13, 14] } },
+                attack_ultimate: { syncMode: 'tick-sequence', sheet: 'attack_ultimate', row: 0, artFrames: { startup: [0, 1, 2, 3, 4], active: [5, 6, 7, 8, 9], recovery: [10, 11, 12, 13, 14] } },
+                hit: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'hit', startFrame: 0, frames: 3, frameDelay: 80, loop: false, row: 0 },
+                    hold: { sheet: 'hit', startFrame: 3, frames: 1, frameDelay: 80, loop: true, row: 0 }
+                },
+                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0, syncMode: 'one-shot' },
+                victory: { sheet: 'victory', startFrame: 0, frames: 6, frameDelay: 150, loop: false, row: 0, syncMode: 'one-shot' },
+                defeat: { sheet: 'defeat', startFrame: 0, frames: 5, frameDelay: 150, loop: false, row: 0, syncMode: 'one-shot' }
             }
         }
     },
@@ -421,20 +452,27 @@ const CHARACTERS = {
             },
 
             animations: {
-                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0 },
-                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0 },
-                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0 },
-                jump: { sheet: 'jump', startFrame: 0, frames: 9, frameDelay: 100, loop: false, row: 0 },
-                fall: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 },
-                attack1: { sheet: 'attack1', startFrame: 0, frames: 6, frameDelay: 80, loop: false, row: 0 },
-                attack2: { sheet: 'attack2', startFrame: 0, frames: 8, frameDelay: 80, loop: false, row: 0 },
-                attack_basic: { sheet: 'attack_basic', startFrame: 0, frames: 4, frameDelay: 80, loop: false, row: 0 },
-                attack_special: { sheet: 'attack_special', startFrame: 0, frames: 8, frameDelay: 100, loop: false, row: 0 },
-                attack_ultimate: { sheet: 'attack_ultimate', startFrame: 0, frames: 12, frameDelay: 120, loop: false, row: 0 },
-                hit: { sheet: 'hit', startFrame: 0, frames: 4, frameDelay: 80, loop: false, row: 0 },
-                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0 },
-                victory: { sheet: 'victory', startFrame: 0, frames: 7, frameDelay: 150, loop: true, row: 0 },
-                defeat: { sheet: 'defeat', startFrame: 0, frames: 5, frameDelay: 150, loop: false, row: 0 }
+                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                walk: { sheet: 'walk', startFrame: 0, frames: 8, frameDelay: 80, loop: true, row: 0, syncMode: 'loop' },
+                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0, syncMode: 'loop' },
+                jump: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'jump', startFrame: 0, frames: 9, frameDelay: 100, loop: false, row: 0 },
+                    hold: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 }
+                },
+                attack1: { syncMode: 'tick-sequence', sheet: 'attack1', row: 0, artFrames: { startup: [0, 1], active: [2, 3], recovery: [4, 5] } },
+                attack2: { syncMode: 'tick-sequence', sheet: 'attack2', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7] } },
+                attack_basic: { syncMode: 'tick-sequence', sheet: 'attack_basic', row: 0, artFrames: { startup: [0, 1], active: [2], recovery: [3] } },
+                attack_special: { syncMode: 'tick-sequence', sheet: 'attack_special', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7] } },
+                attack_ultimate: { syncMode: 'tick-sequence', sheet: 'attack_ultimate', row: 0, artFrames: { startup: [0, 1, 2, 3], active: [4, 5, 6, 7], recovery: [8, 9, 10, 11] } },
+                hit: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'hit', startFrame: 0, frames: 3, frameDelay: 80, loop: false, row: 0 },
+                    hold: { sheet: 'hit', startFrame: 3, frames: 1, frameDelay: 80, loop: true, row: 0 }
+                },
+                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0, syncMode: 'one-shot' },
+                victory: { sheet: 'victory', startFrame: 0, frames: 7, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                defeat: { sheet: 'defeat', startFrame: 0, frames: 5, frameDelay: 150, loop: false, row: 0, syncMode: 'one-shot' }
             }
         }
     },
@@ -544,20 +582,27 @@ const CHARACTERS = {
             },
 
             animations: {
-                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0 },
-                walk: { sheet: 'walk', startFrame: 0, frames: 6, frameDelay: 80, loop: true, row: 0 },
-                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0 },
-                jump: { sheet: 'jump', startFrame: 0, frames: 8, frameDelay: 100, loop: false, row: 0 },
-                fall: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 },
-                attack1: { sheet: 'attack1', startFrame: 0, frames: 6, frameDelay: 80, loop: false, row: 0 },
-                attack2: { sheet: 'attack2', startFrame: 0, frames: 8, frameDelay: 80, loop: false, row: 0 },
-                attack_basic: { sheet: 'attack_basic', startFrame: 0, frames: 5, frameDelay: 80, loop: false, row: 0 },
-                attack_special: { sheet: 'attack_special', startFrame: 0, frames: 12, frameDelay: 100, loop: false, row: 0 },
-                attack_ultimate: { sheet: 'attack_ultimate', startFrame: 0, frames: 10, frameDelay: 150, loop: false, row: 0 },
-                hit: { sheet: 'hit', startFrame: 0, frames: 4, frameDelay: 80, loop: false, row: 0 },
-                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0 },
-                victory: { sheet: 'victory', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0 },
-                defeat: { sheet: 'defeat', startFrame: 0, frames: 6, frameDelay: 150, loop: false, row: 0 }
+                idle: { sheet: 'main', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                walk: { sheet: 'walk', startFrame: 0, frames: 6, frameDelay: 80, loop: true, row: 0, syncMode: 'loop' },
+                dash: { sheet: 'dash', startFrame: 0, frames: 2, frameDelay: 100, loop: true, row: 0, syncMode: 'loop' },
+                jump: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'jump', startFrame: 0, frames: 8, frameDelay: 100, loop: false, row: 0 },
+                    hold: { sheet: 'jump', startFrame: 3, frames: 3, frameDelay: 100, loop: true, row: 0 }
+                },
+                attack1: { syncMode: 'tick-sequence', sheet: 'attack1', row: 0, artFrames: { startup: [0, 1], active: [2, 3], recovery: [4, 5] } },
+                attack2: { syncMode: 'tick-sequence', sheet: 'attack2', row: 0, artFrames: { startup: [0, 1, 2], active: [3, 4, 5], recovery: [6, 7] } },
+                attack_basic: { syncMode: 'tick-sequence', sheet: 'attack_basic', row: 0, artFrames: { startup: [0, 1], active: [2, 3], recovery: [4] } },
+                attack_special: { syncMode: 'tick-sequence', sheet: 'attack_special', row: 0, artFrames: { startup: [0, 1, 2, 3], active: [4, 5, 6, 7], recovery: [8, 9, 10, 11] } },
+                attack_ultimate: { syncMode: 'tick-sequence', sheet: 'attack_ultimate', row: 0, artFrames: { startup: [0, 1, 2, 3], active: [4, 5, 6], recovery: [7, 8, 9] } },
+                hit: {
+                    syncMode: 'transition-loop',
+                    intro: { sheet: 'hit', startFrame: 0, frames: 3, frameDelay: 80, loop: false, row: 0 },
+                    hold: { sheet: 'hit', startFrame: 3, frames: 1, frameDelay: 80, loop: true, row: 0 }
+                },
+                block: { sheet: 'block', startFrame: 0, frames: 2, frameDelay: 100, loop: false, row: 0, syncMode: 'one-shot' },
+                victory: { sheet: 'victory', startFrame: 0, frames: 4, frameDelay: 150, loop: true, row: 0, syncMode: 'loop' },
+                defeat: { sheet: 'defeat', startFrame: 0, frames: 6, frameDelay: 150, loop: false, row: 0, syncMode: 'one-shot' }
             }
         }
     }
