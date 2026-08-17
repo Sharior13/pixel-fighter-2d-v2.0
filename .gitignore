@@ -2,3 +2,4 @@
 node_modules
 docs
 public/core/sim/
+server/data/generatedAnimSequences.js
