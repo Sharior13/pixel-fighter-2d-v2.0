@@ -132,6 +132,11 @@ class BattleUI {
             debugWarn(`[BattleUI] Character image not found for ${characterName}`);
             // Use a simple colored div instead of placeholder URL
             imageElement.style.display = 'none';
+            // onerror fires asynchronously - by the time it does, the image
+            // could have already been detached from the DOM (e.g. a rematch
+            // re-triggering this before the previous match's failed load
+            // settled), so parentElement isn't guaranteed to still exist.
+            if (!imageElement.parentElement) return;
             imageElement.parentElement.style.background = '#8B4513';
             imageElement.parentElement.style.display = 'flex';
             imageElement.parentElement.style.alignItems = 'center';
