@@ -118,8 +118,12 @@ class AnimationStateManager {
             this.transitionToAnimation(player.socketId, targetAnimation, animator, currentAnimState, player.character);
         }
         
-        //update the animator
-        animator.update(deltaTime);
+        //update the animator - player is passed through so syncMode
+        //branches that need live combat state (e.g. the upcoming
+        //'tick-sequence' mode reading player.attackFrame) have it available
+        //without another call-site change later (see
+        //animation-engine-refactor-spec.md)
+        animator.update(deltaTime, player);
         
         //store current frame data for next update
         this.updatePreviousFrameData(player, previousFrame);
@@ -207,11 +211,34 @@ class AnimationStateManager {
         if(targetAnimation === currentAnimState.current){
             return false;
         }
-        
-        //check if current animation must finish
-        const isNonInterruptible = AnimationStateManager.NON_INTERRUPTIBLE.has(currentAnimState.current);
-        
-        if(isNonInterruptible){
+
+        //Derived from syncMode where available (see
+        //animation-engine-refactor-spec.md), instead of the old hardcoded
+        //NON_INTERRUPTIBLE name Set. This matters beyond just "cleaner code":
+        //'transition-loop' animations (jump, hit) have an isAnimationFinished()
+        //that deliberately NEVER returns true (their real exit condition -
+        //isGrounded, isStunned, etc - already lives in determineTargetAnimation's
+        //own priority ordering above, not in frame count). 'hit' used to be in
+        //NON_INTERRUPTIBLE under the old name-based check; migrating it to
+        //transition-loop while keeping that old gate would mean canTransitionTo
+        //requires isAnimationFinished()===true to ever leave 'hit' - which would
+        //never happen, permanently freezing on the hit pose the instant hitstun
+        //ends and target changes to something else. Exactly the stuck-forever
+        //bug class this whole refactor exists to remove, just reintroduced via
+        //a stale interruptibility rule instead of a stale sprite timer.
+        //
+        //Only animations that have been migrated (have an explicit syncMode)
+        //use this new derivation; anything not yet migrated falls back to the
+        //exact old Set-based check below, so nothing not touched by this pass
+        //changes behavior.
+        const currentAnim = animator.config.animations[currentAnimState.current];
+        const syncMode = currentAnim && currentAnim.syncMode;
+
+        const mustFinish = syncMode
+            ? (syncMode === 'one-shot' || syncMode === 'tick-sequence')
+            : AnimationStateManager.NON_INTERRUPTIBLE.has(currentAnimState.current);
+
+        if(mustFinish){
             //can only transition if animation is finished
             return animator.isAnimationFinished();
         }

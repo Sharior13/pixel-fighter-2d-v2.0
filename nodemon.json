@@ -1,5 +1,5 @@
 {
     "watch": ["server", "scripts"],
     "ext": "js,json",
-    "ignore": ["public/core/sim/**"]
+    "ignore": ["public/core/sim/**", "server/data/generatedAnimSequences.js"]
 }
