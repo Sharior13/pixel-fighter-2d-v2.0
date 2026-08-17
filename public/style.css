@@ -39,6 +39,10 @@ body{
     /* allow normal single-finger panning (so the browser can still auto-hide
        its own toolbar on scroll) while blocking pinch-zoom/double-tap-zoom */
     touch-action: manipulation;
+    /* letterbox/pillarbox backdrop - only ever visible now that the canvas
+       has a fixed logical resolution letterboxed to fit the window, rather
+       than always exactly filling it */
+    background: #000;
 }
 
 #canvas{
@@ -50,12 +54,16 @@ body{
     background-size: cover;
     background-repeat: no-repeat;
     background-position: center;
-    border: 1px solid black;
     z-index: -1;
     position: absolute;
     top: 0;
     left: 0;
     opacity: 97%;
+    /* the canvas's internal resolution is now fixed (see public/core/
+       viewport.js) and gets CSS-scaled up/down to fit the display - without
+       this, that scaling blurs the pixel art via the browser's default
+       image smoothing. */
+    image-rendering: pixelated;
 }
 
 .hidden {
@@ -1446,10 +1454,20 @@ body{
     width: 100vw;
     height: 100vh;
     position: relative;
-    background-image: url('fire-village.gif');
-    background-position: center;
-    background-repeat: no-repeat;
-    background-size: 100% 100%;
+    /* No background-image here on purpose. This div isn't a background layer
+       - it's the battle HUD (health bars, character frames, combo display -
+       see index.html), which needs to render ABOVE the canvas, and does:
+       it's position:relative with no z-index, which - per normal CSS
+       stacking rules - paints after/on top of canvas's position:absolute;
+       z-index:-1, regardless of DOM order. A stray background-image used to
+       live here (a hardcoded 'fire-village.gif' with a broken path, so it
+       silently rendered nothing and this went unnoticed). The real per-match
+       map background is handled separately and correctly by render.js's
+       setMap(), which creates its own <img id="bgImage"> at z-index:-2,
+       safely behind the canvas. Adding a background-image back here would
+       cover the entire HUD (and the game itself) the moment it successfully
+       loaded, exactly like it did when the path was first fixed.
+    */
 }
 
         /* Character Frames */
@@ -1499,30 +1517,69 @@ body{
             right: 20px;
         }
 
+        /* Dash Cooldown Bar - sits directly under the player name */
+        .dash-bar-wrapper {
+            position: absolute;
+            top: 162px;
+            width: 110px;
+            z-index: 10;
+        }
+
+        .dash-bar-wrapper.left {
+            left: 20px;
+        }
+
+        .dash-bar-wrapper.right {
+            right: 20px;
+        }
+
+        .dash-bar-bg {
+            height: 8px;
+            background: rgba(20, 20, 20, 0.95);
+            border: 2px solid rgba(255, 255, 255, 0.7);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .dash-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #0091b3, #00d4ff);
+            box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.4);
+            transition: width 0.1s linear;
+        }
+
+        /* Glow once dash is off cooldown and ready to use again */
+        .dash-bar-fill.dash-ready {
+            background: linear-gradient(90deg, #00d4ff, #9df7ff);
+            box-shadow: 0 0 10px rgba(0, 212, 255, 0.85);
+        }
+
         /* Health and Ultimate Bars Container */
         .bars-container {
             position: absolute;
-            top: clamp(25px, 3vh, 30px);
+            top: clamp(25px, 3cqh, 30px);
             z-index: 5;
         }
 
         .bars-container.left {
-            left: clamp(15px, 2vw, 20px);
+            left: clamp(15px, 2cqw, 20px);
             
         }
 
         .bars-container.right {
-            right: clamp(15px, 2vw, 20px);
+            right: clamp(15px, 2cqw, 20px);
         }
 
         /* Health Bar */
         .health-bar-wrapper {
             position: relative;
-            margin-bottom: clamp(4px, 0.8vh, 6px);
+            margin-bottom: clamp(4px, 0.8cqh, 6px);
         }
 
         .health-bar-bg {
-            height: clamp(28px, 4vh, 38px);
+            height: clamp(28px, 4cqh, 38px);
             background: rgba(20, 20, 20, 0.95);
             border: 3px solid rgba(237, 233, 233, 0.959);
             position: relative;
@@ -1537,13 +1594,13 @@ body{
 
         /* Individual width control for each player's health bar background */
         #health-bg-p1 {
-            width: clamp(250px, 35vw, 500px);
-            left: clamp(55px, 5vw, 65px);
+            width: clamp(250px, 35cqw, 500px);
+            left: clamp(55px, 5cqw, 65px);
         }
 
         #health-bg-p2 {
-            width: clamp(250px, 35vw, 500px);
-            right: clamp(55px, 5vw, 65px);
+            width: clamp(250px, 35cqw, 500px);
+            right: clamp(55px, 5cqw, 65px);
         }
 
         .health-bar-fill {
@@ -1583,7 +1640,7 @@ body{
         }
 
         .ultimate-bar-bg {
-            height: clamp(14px, 2vh, 18px);
+            height: clamp(14px, 2cqh, 18px);
             background: rgba(20, 20, 20, 0.95);
             border: 2px solid rgb(255, 255, 255);
             position: relative;
@@ -1598,11 +1655,11 @@ body{
 
         /* Individual width control for each player's ultimate bar background */
         #ultimate-bg-p1 {
-            width: clamp(250px, 35vw, 500px);
+            width: clamp(250px, 35cqw, 500px);
         }
 
         #ultimate-bg-p2 {
-            width: clamp(250px, 35vw, 500px);
+            width: clamp(250px, 35cqw, 500px);
         }
 
         .ultimate-bar-fill {
@@ -1666,7 +1723,7 @@ body{
         }
 
         .burst-challenge-prompt {
-            font-size: clamp(20px, 3.2vh, 34px);
+            font-size: clamp(20px, 3.2cqh, 34px);
             font-weight: bold;
             color: #f0d9ff;
             text-shadow: 3px 3px 0 #000, 0 0 18px rgba(216, 180, 254, 0.95);
@@ -1681,7 +1738,7 @@ body{
            public/core/input.js (currently W or Space). */
         .burst-challenge-key-hint {
             display: block;
-            font-size: clamp(12px, 1.8vh, 18px);
+            font-size: clamp(12px, 1.8cqh, 18px);
             letter-spacing: 2px;
             color: #d8b4fe;
             text-shadow: 2px 2px 0 #000, 0 0 10px rgba(216, 180, 254, 0.7);
@@ -1697,8 +1754,8 @@ body{
         }
 
         .burst-challenge-track {
-            width: clamp(240px, 30vw, 420px);
-            height: clamp(14px, 2.2vh, 20px);
+            width: clamp(240px, 30cqw, 420px);
+            height: clamp(14px, 2.2cqh, 20px);
             background: rgba(20, 20, 20, 0.95);
             border: 2px solid rgba(200, 160, 255, 0.9);
             position: relative;
@@ -1749,7 +1806,7 @@ body{
            alongside it. */
         .burst-challenge-result {
             display: none;
-            font-size: clamp(20px, 3.2vh, 34px);
+            font-size: clamp(20px, 3.2cqh, 34px);
             font-weight: bold;
             text-shadow: 3px 3px 0 #000, 0 0 18px currentColor;
             letter-spacing: 2px;
@@ -1785,8 +1842,8 @@ body{
 
         /* Combo Display */
         .combo-display {
-            margin-top: clamp(4px, 0.8vh, 8px);
-            font-size: clamp(14px, 1.8vh, 18px);
+            margin-top: clamp(4px, 0.8cqh, 8px);
+            font-size: clamp(14px, 1.8cqh, 18px);
             font-weight: bold;
             color: #ffd700;
             text-shadow: 2px 2px 0 #000, 0 0 10px rgba(255, 215, 0, 0.7);
@@ -2507,6 +2564,19 @@ body{
         right: 15px;
     }
 
+    .dash-bar-wrapper {
+        top: 132px;
+        width: 90px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 15px;
+    }
+
+    .dash-bar-wrapper.right {
+        right: 15px;
+    }
+
     #health-bg-p1,
     #health-bg-p2 {
         width: clamp(200px, 30vw, 400px);
@@ -2553,6 +2623,19 @@ body{
 
     .character-name.right {
         top: 85px;
+        right: 10px;
+    }
+
+    .dash-bar-wrapper {
+        top: 105px;
+        width: 70px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 10px;
+    }
+
+    .dash-bar-wrapper.right {
         right: 10px;
     }
 
@@ -2634,6 +2717,19 @@ body{
 
     .character-name.right {
         top: 70px;
+        right: 8px;
+    }
+
+    .dash-bar-wrapper {
+        top: 88px;
+        width: 55px;
+    }
+
+    .dash-bar-wrapper.left {
+        left: 8px;
+    }
+
+    .dash-bar-wrapper.right {
         right: 8px;
     }
 
@@ -2874,6 +2970,11 @@ body{
     .character-name.left, .character-name.right {
         top: 60px !important;
     }
+
+    .dash-bar-wrapper {
+        top: 78px !important;
+        width: 50px;
+    }
 }
 
 /* ----- Rotate-device overlay -----
@@ -2911,6 +3012,90 @@ body{
     }
 }
 
+/* ----- One-time-per-session full screen gate -----
+   Hidden by default, shown once by core/fullscreenGate.js. Desktop/laptop
+   gets the plain (non-mandatory) look with a close button; the
+   `.mandatory` modifier (added by JS on phones/tablets) reuses the exact
+   dark full-viewport treatment #rotate-overlay uses above and hides the
+   close button, since full screen + landscape are required there, not
+   optional. */
+#fullscreen-gate {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 6000;
+    background: rgba(20, 20, 20, 0.65);
+    color: #fff;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 16px;
+    padding: 20px;
+}
+
+#fullscreen-gate.visible {
+    display: flex;
+}
+
+#fullscreen-gate.mandatory {
+    background: rgba(10, 10, 10, 0.96);
+}
+
+#fullscreen-gate .rotate-icon {
+    font-size: 64px;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+#fullscreen-gate p {
+    font-size: clamp(14px, 4vw, 20px);
+    max-width: 340px;
+    line-height: 1.5;
+}
+
+#fullscreen-gate-rotate-message {
+    color: #FFD700;
+    font-weight: bold;
+}
+
+.fullscreen-gate-close {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.7);
+    background: rgba(0, 0, 0, 0.4);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.fullscreen-gate-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+/* Mandatory variant never shows a close button - see core/fullscreenGate.js */
+#fullscreen-gate.mandatory .fullscreen-gate-close {
+    display: none;
+}
+
+/* .btn's own `display: block` (later in this file, same specificity as
+   .hidden) otherwise wins the cascade and the button never actually
+   disappears - these ID-scoped overrides guarantee .hidden wins regardless
+   of source order. */
+#fullscreen-gate-btn.hidden,
+#fullscreen-gate-message.hidden {
+    display: none !important;
+}
+
 /* ----- On-screen touch controls -----
    Hidden by default; shown via JS (touchControls.js) only on
    touch-capable devices, and only while a battle is active. */
@@ -2923,7 +3108,10 @@ body{
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    padding: 0 clamp(10px, 2vw, 24px) max(10px, env(safe-area-inset-bottom));
+    padding: 0
+        max(clamp(10px, 2vw, 24px), env(safe-area-inset-right))
+        max(10px, env(safe-area-inset-bottom))
+        max(clamp(10px, 2vw, 24px), env(safe-area-inset-left));
     pointer-events: none;
 }
 
@@ -3013,4 +3201,243 @@ body{
     #rotate-overlay {
         display: none !important;
     }
+}
+/* ============================================================================
+   CAMPAIGN MODE (public/ui/campaignUI.js) - Level Select, character picker,
+   result screen. Reuses existing tokens (--accent-gold etc.), .btn, and
+   .character-slot/.character-grid conventions rather than inventing a
+   parallel visual language.
+   ============================================================================ */
+.campaign-screen {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    height: 100svh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: clamp(14px, 2.5vh, 28px);
+    padding: clamp(16px, 3vh, 32px) 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    animation: loadIn 0.5s ease-out;
+    /* Own background rather than relying on the canvas showing through -
+       the canvas's 2D bitmap gets wiped any time render.js's window
+       "resize" handler fires (setting canvas.width/height always clears
+       the drawn frame, regardless of whether the size actually changed),
+       which was leaving the result screen sitting over a plain white page
+       background whenever that happened mid-fight or right after. */
+    background: linear-gradient(135deg, var(--dark-purple) 0%, #170826 100%);
+}
+
+/* .hidden (declared earlier in this file) and .campaign-screen both have
+   single-class specificity, so without this override, whichever rule comes
+   later in the cascade (.campaign-screen's `display: flex`) would always win
+   and the "hidden" class would silently do nothing - the screen would stay
+   visible, still occupying space in body's flex row (squeezing everything
+   else), and any button inside it could stay focused, letting a stray
+   Space/Enter keypress re-fire its click handler mid-fight. This rule's two-
+   class specificity guarantees .hidden always wins on these screens. */
+.campaign-screen.hidden {
+    display: none;
+}
+
+.campaign-screen-header {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.campaign-grid {
+    width: 100%;
+    max-width: 900px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(clamp(90px, 14vw, 130px), 1fr));
+    gap: clamp(10px, 2vw, 18px);
+}
+
+.campaign-tile-divider {
+    grid-column: 1 / -1;
+    height: 2px;
+    background: var(--ui-border);
+    opacity: 0.4;
+    margin: 6px 0;
+}
+
+.campaign-tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(30, 10, 50, 0.9) 0%, rgba(20, 5, 35, 0.9) 100%);
+    border: 3px solid #555;
+    border-radius: 10px;
+    padding: clamp(8px, 1.5vw, 14px);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    color: var(--text-white);
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.campaign-tile img {
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
+    object-fit: cover;
+    border-radius: 6px;
+    image-rendering: pixelated;
+}
+
+/* The Rival tile has no single fixed character (it mirrors whatever the
+   player picks), so it renders this "?" placeholder instead of an <img> -
+   without an explicit box the same size as .campaign-tile img above, its
+   tile collapses shorter than every other tile in the grid. */
+.campaign-tile-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
+    font-size: clamp(24px, 4vw, 40px);
+    color: var(--accent-cyan);
+}
+
+.campaign-tile:not([disabled]):hover {
+    border-color: var(--accent-cyan);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.7);
+}
+
+.campaign-tile.cleared {
+    border-color: var(--accent-gold);
+}
+
+.campaign-tile[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.campaign-tile-lock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 7vw, 72px);
+    height: clamp(48px, 7vw, 72px);
+    font-size: clamp(24px, 4vw, 40px);
+}
+
+.campaign-tile-label {
+    font-size: clamp(10px, 1.4vw, 14px);
+    text-align: center;
+    letter-spacing: 1px;
+}
+
+.campaign-tile-stars {
+    color: var(--accent-gold);
+    font-size: clamp(11px, 1.6vw, 16px);
+    letter-spacing: 2px;
+}
+
+.campaign-picker-grid {
+    max-height: min(400px, 55vh);
+    max-height: min(400px, 55svh);
+}
+
+/* #campaign-result-screen reuses matchEndScreen.js's .result-container/
+   .result-text/.match-stats/.match-end-btn classes for visual parity with
+   Quick Play's post-match combat report (see campaignUI.js's
+   combatStatsHtml()) - those classes are all global/self-contained in this
+   file already, so no duplicate styling is needed here. This screen's own
+   rules just center that card vertically (the base .campaign-screen is
+   top-aligned, for Level Select/character-picker's grids) and add the two
+   things Quick Play's screen doesn't have: the star rating and the
+   New-Game+ lap-up callout. ID selector here intentionally outranks the
+   base .campaign-screen class rule, the same way .campaign-screen.hidden
+   needed to outrank it above. */
+#campaign-result-screen {
+    justify-content: center;
+}
+
+.campaign-result-stars {
+    font-size: clamp(28px, 6vw, 48px);
+    color: var(--accent-gold);
+    letter-spacing: 6px;
+    margin-bottom: clamp(6px, 1.5vh, 14px);
+}
+
+.retry-btn {
+    background: linear-gradient(135deg, #E2B04A, #BD8A35);
+    color: white;
+}
+
+.retry-btn:hover {
+    background: linear-gradient(135deg, #BD8A35, #A66E28);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(226, 176, 74, 0.4);
+}
+
+/* ── Campaign Difficulty Select (spec Section 8) ─────────────────────── */
+.campaign-difficulty-grid {
+    width: 100%;
+    max-width: 700px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(clamp(140px, 24vw, 200px), 1fr));
+    gap: clamp(14px, 2.5vw, 24px);
+}
+
+.campaign-difficulty-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: linear-gradient(135deg, rgba(30, 10, 50, 0.9) 0%, rgba(20, 5, 35, 0.9) 100%);
+    border: 3px solid #555;
+    border-radius: 10px;
+    padding: clamp(18px, 3vh, 28px) 12px;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    color: var(--text-white);
+    font-family: Arial, Helvetica, sans-serif;
+    text-align: center;
+}
+
+.campaign-difficulty-tile:hover {
+    border-color: var(--accent-cyan);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(0, 217, 255, 0.7);
+}
+
+.campaign-difficulty-tile.last-played {
+    border-color: var(--accent-gold);
+}
+
+.campaign-difficulty-name {
+    font-size: clamp(18px, 3vw, 26px);
+    font-weight: bold;
+    letter-spacing: 2px;
+}
+
+.campaign-difficulty-lap {
+    font-size: clamp(11px, 1.6vw, 14px);
+    color: var(--accent-cyan);
+    letter-spacing: 1px;
+}
+
+.campaign-difficulty-progress,
+.campaign-difficulty-rival {
+    font-size: clamp(11px, 1.6vw, 14px);
+    color: #ccc;
+}
+
+.campaign-result-lapup {
+    color: var(--accent-cyan);
+    font-size: clamp(13px, 2vw, 18px);
+    text-align: center;
+    max-width: 90vw;
 }
