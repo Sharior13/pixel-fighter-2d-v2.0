@@ -1,8 +1,42 @@
 // Small, low-opacity ping/latency readout, pinned to the bottom-right corner
 // (see #ping-display in index.html/style.css). Deliberately unobtrusive -
 // this is a diagnostic readout for the player, not a UI focal point.
-let pingEl = null;
+//
+// The actual rendering now lives in a React component
+// (public/src/components/PingDisplay.jsx). This file no longer touches the
+// DOM directly - it just keeps track of "what should the readout currently
+// show" as a plain object, and hands that object to anyone who asks via
+// subscribePingState() below. React is one such subscriber, but this file
+// doesn't know or care that React is the one listening - it would work
+// exactly the same way if the caller were plain JS.
+//
+// This is a minimal do-it-yourself version of a pattern you'll see called a
+// "store" - some state, plus a way to be notified when it changes. It's only
+// a few lines because the state here is tiny; don't reach for a library for
+// this.
+let pingState = {
+    visible: false,
+    text: '--ms',
+    colorClass: 'ping-disconnected',
+};
+
+const subscribers = new Set();
 let measureInterval = null;
+
+const setPingState = (partial) => {
+    pingState = { ...pingState, ...partial };
+    subscribers.forEach((callback) => callback(pingState));
+};
+
+// Registers a callback to be called with the current state immediately, and
+// again every time the state changes. Returns an "unsubscribe" function -
+// call it when you no longer want updates (React calls this automatically
+// when the component using it goes away, see PingDisplay.jsx).
+const subscribePingState = (callback) => {
+    subscribers.add(callback);
+    callback(pingState);
+    return () => subscribers.delete(callback);
+};
 
 // How often to re-measure (ms) and how long to wait for a reply before
 // treating it as a dropped/very bad ping.
@@ -18,26 +52,13 @@ const PING_THRESHOLDS = {
     poor: 200,  // <= 200ms: orange, anything above is red
 };
 
-const getPingEl = () => {
-    if (!pingEl) {
-        pingEl = document.getElementById('ping-display');
-    }
-    return pingEl;
-};
-
 // The readout is only meaningful while matchmaking or in a match - it starts
-// hidden (see index.html) and should go back to hidden the moment we're not
-// doing either of those things, rather than just sitting there showing a
-// stale/disconnected reading on the main menu.
-const showPingEl = () => {
-    const el = getPingEl();
-    if (el) el.classList.remove('hidden');
-};
+// hidden and should go back to hidden the moment we're not doing either of
+// those things, rather than just sitting there showing a stale/disconnected
+// reading on the main menu.
+const showPingEl = () => setPingState({ visible: true });
 
-const hidePingEl = () => {
-    const el = getPingEl();
-    if (el) el.classList.add('hidden');
-};
+const hidePingEl = () => setPingState({ visible: false });
 
 const colorClassForPing = (ms) => {
     if (ms <= PING_THRESHOLDS.good) return 'ping-good';
@@ -47,21 +68,11 @@ const colorClassForPing = (ms) => {
 };
 
 const renderPing = (ms) => {
-    const el = getPingEl();
-    if (!el) return;
-
-    el.textContent = `${ms}ms`;
-    el.classList.remove('ping-good', 'ping-okay', 'ping-poor', 'ping-bad', 'ping-disconnected');
-    el.classList.add(colorClassForPing(ms));
+    setPingState({ text: `${ms}ms`, colorClass: colorClassForPing(ms) });
 };
 
 const renderDisconnected = () => {
-    const el = getPingEl();
-    if (!el) return;
-
-    el.textContent = '--ms';
-    el.classList.remove('ping-good', 'ping-okay', 'ping-poor', 'ping-bad');
-    el.classList.add('ping-disconnected');
+    setPingState({ text: '--ms', colorClass: 'ping-disconnected' });
 };
 
 // Measures one round trip via a plain ack callback (socket.emit with a
@@ -110,4 +121,4 @@ const stopPingMonitor = () => {
     hidePingEl();
 };
 
-export { startPingMonitor, stopPingMonitor };
+export { startPingMonitor, stopPingMonitor, subscribePingState };

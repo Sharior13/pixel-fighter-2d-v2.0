@@ -48,9 +48,9 @@
     <!-- brief centered status messages: "Match Found!", "Opponent disconnected" -->
     <div id="status-banner"></div>
 
-    <!-- ping/latency readout, shown from matchmaking through the end of a
-         match (see public/ui/pingDisplay.js for show/hide + color logic) -->
-    <div id="ping-display" class="hidden"></div>
+    <!-- ping/latency readout (public/src/components/PingDisplay.jsx, driven by
+         public/ui/pingDisplay.js) is rendered into #react-root near the
+         bottom of this file, not here. -->
 
     <!-- loading screen: shown after character lock-in while assets preload and we
          wait for both players to confirm readiness (see public/ui/loadingScreen.js) -->
@@ -398,8 +398,14 @@
         </div>
     </div>
 
+    <!-- Where React will mount. Empty and invisible for now (Phase 2 only
+         proves React can start up alongside the existing UI) - real screens
+         get moved in here starting Phase 3. -->
+    <div id="react-root"></div>
+
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
     <!-- <script src="/socket.io/socket.io.js"></script> -->
     <script type="module" src="./ui/titleScreen.js"></script>
+    <script type="module" src="./src/main.jsx"></script>
 </body>
 </html>
