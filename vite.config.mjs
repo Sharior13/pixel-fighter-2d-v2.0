@@ -1,5 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { cpSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Minimal Vite setup for the React migration (see docs/react-ui-migration-plan.md).
 //
@@ -8,21 +13,32 @@ import react from '@vitejs/plugin-react';
 // as the browser already does today. Nothing about the existing file layout
 // changes.
 //
-// publicDir: 'assets' - Vite's own convention is a "publicDir" folder of
-// files that get copied to the build output untouched (no bundling/hashing).
-// public/assets already plays that role (title logo, small local images -
-// character/music assets are loaded from a CDN, not from here, see
-// public/core/config.js), so this just tells Vite about it explicitly
-// instead of guessing.
-//
 // build.outDir: '../dist' - build output goes to a new top-level dist/
 // folder (outside public/), so the existing public/ folder that's deployed
 // today is left completely alone until you're ready to point deployment at
 // dist/ instead. See the phase 2 report for more on this.
+//
+// Why there's a custom plugin instead of Vite's built-in `publicDir` option:
+// some backgrounds are loaded with a path built at runtime from data, e.g.
+// `../assets/background/${mapId}.gif` in render.js/assetPreloader.js. Vite
+// can only bundle/hash paths it can see as a literal string in the code, so
+// these need a stable, unhashed copy sitting at a predictable path in the
+// build output instead. Vite's `publicDir` option copies a folder's
+// *contents* to the root of dist/, dropping the folder's own name (so
+// public/assets/x.png would become dist/x.png, not dist/assets/x.png) -
+// which doesn't match the "assets/..." paths this game's code actually
+// requests at runtime. This plugin just copies public/assets straight to
+// dist/assets, keeping the prefix intact, after Vite's own build finishes.
+const copyAssetsPlugin = () => ({
+    name: 'copy-assets-preserving-prefix',
+    closeBundle() {
+        cpSync(resolve(__dirname, 'public/assets'), resolve(__dirname, 'dist/assets'), { recursive: true });
+    },
+});
+
 export default defineConfig({
     root: 'public',
-    publicDir: 'assets',
-    plugins: [react()],
+    plugins: [react(), copyAssetsPlugin()],
     build: {
         outDir: '../dist',
         emptyOutDir: true,

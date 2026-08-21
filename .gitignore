@@ -1,5 +1,6 @@
 .env
 node_modules
 docs
+dist
 public/core/sim/
 server/data/generatedAnimSequences.js

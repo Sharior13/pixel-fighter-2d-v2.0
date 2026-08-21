@@ -12,6 +12,8 @@
     "start": "node server/server.js",
     "start-nodemon": "nodemon --exec \"npm run build:sim && node server/server.js\"",
     "dev": "vite",
+    "predev": "npm run build:sim",
+    "prebuild": "npm run build:sim",
     "build": "vite build",
     "preview": "vite preview"
   },
