@@ -1,4 +1,6 @@
 import PingDisplay from './components/PingDisplay.jsx';
+import StatusBanner from './components/StatusBanner.jsx';
+import LoadingScreen from './components/LoadingScreen.jsx';
 
 // The root React component. Every screen this migration converts gets
 // rendered from somewhere inside here.
@@ -6,10 +8,16 @@ import PingDisplay from './components/PingDisplay.jsx';
 // A "component" is just a function that returns what should appear on
 // screen, written in JSX (HTML-like syntax mixed into JavaScript).
 //
-// PingDisplay is the first converted piece (Phase 3) - it decides its own
-// visibility internally (see PingDisplay.jsx), so it's safe to always
-// render it here; nothing shows up until pingDisplay.js's existing
-// startPingMonitor()/stopPingMonitor() logic says it should.
+// Each of these decides its own visibility internally (see their own
+// files), so it's safe to always render all of them here; nothing shows
+// up until the existing vanilla-JS logic that drives each one says it
+// should.
 export default function App() {
-    return <PingDisplay />;
+    return (
+        <>
+            <PingDisplay />
+            <StatusBanner />
+            <LoadingScreen />
+        </>
+    );
 }

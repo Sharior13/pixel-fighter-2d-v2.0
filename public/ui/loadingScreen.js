@@ -1,68 +1,58 @@
-import { ASSET_BASE_URL } from "../core/config.js";
-
+// Same pattern as pingDisplay.js/statusBanner.js: this class no longer
+// touches the DOM. It keeps track of "what should the loading screen
+// currently show" as plain state, and hands that to whoever's subscribed
+// (see public/src/components/LoadingScreen.jsx). socket.js and
+// campaignUI.js call the exact same methods (show/setProgress/
+// setWaitingForOpponent/hide) as before - only what happens inside them
+// changed.
 class LoadingScreenUI {
     constructor() {
-        this.el = document.getElementById('loading-screen');
+        this.state = {
+            visible: false,
+            local: null,
+            opponent: null,
+            statusText: 'Loading assets...',
+            progressPercent: 0,
+        };
+        this.subscribers = new Set();
+    }
+
+    subscribe(callback) {
+        this.subscribers.add(callback);
+        callback(this.state);
+        return () => this.subscribers.delete(callback);
+    }
+
+    setState(partial) {
+        this.state = { ...this.state, ...partial };
+        this.subscribers.forEach((callback) => callback(this.state));
     }
 
     show(players, localSocketId) {
-        if (!this.el) return;
+        const local = players.find(p => p.socketId === localSocketId) || null;
+        const opponent = players.find(p => p.socketId !== localSocketId) || null;
 
-        const local = players.find(p => p.socketId === localSocketId);
-        const opponent = players.find(p => p.socketId !== localSocketId);
-
-        this.el.innerHTML = `
-            <div class="loading-content">
-                <div class="loading-matchup">
-                    ${this.renderCard(local)}
-                    <span class="loading-vs">VS</span>
-                    ${this.renderCard(opponent)}
-                </div>
-                <div class="loading-spinner"></div>
-                <div class="loading-status" id="loading-status-text">Loading assets...</div>
-                <div class="loading-progress-track">
-                    <div class="loading-progress-fill" id="loading-progress-fill" style="width: 0%"></div>
-                </div>
-            </div>
-        `;
-
-        this.el.classList.remove('hidden');
-    }
-
-    renderCard(player) {
-        if (!player || !player.character) {
-            return `<div class="loading-player-card"><span class="silhouette">?</span></div>`;
-        }
-
-        const charId = player.character.toLowerCase();
-        return `
-            <div class="loading-player-card">
-                <img src="${ASSET_BASE_URL}/characters/${charId}/${charId}-icon.png" alt="${player.character}">
-                <span>${player.character.toUpperCase()}</span>
-            </div>
-        `;
+        this.setState({
+            visible: true,
+            local,
+            opponent,
+            statusText: 'Loading assets...',
+            progressPercent: 0,
+        });
     }
 
     setProgress(loaded, total) {
-        if (!this.el) return;
-        const fill = document.getElementById('loading-progress-fill');
-        if (fill && total > 0) {
-            fill.style.width = `${Math.min(100, Math.round((loaded / total) * 100))}%`;
+        if (total > 0) {
+            this.setState({ progressPercent: Math.min(100, Math.round((loaded / total) * 100)) });
         }
     }
 
     setWaitingForOpponent() {
-        if (!this.el) return;
-        const status = document.getElementById('loading-status-text');
-        if (status) {
-            status.textContent = 'Waiting for opponent...';
-        }
+        this.setState({ statusText: 'Waiting for opponent...' });
     }
 
     hide() {
-        if (!this.el) return;
-        this.el.classList.add('hidden');
-        this.el.innerHTML = '';
+        this.setState({ visible: false });
     }
 }
 

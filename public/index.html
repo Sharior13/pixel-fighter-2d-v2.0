@@ -45,16 +45,16 @@
     <!-- queuing ui -->
     <div id="queuing"></div>
 
-    <!-- brief centered status messages: "Match Found!", "Opponent disconnected" -->
-    <div id="status-banner"></div>
+    <!-- brief centered status messages ("Match Found!", "Opponent disconnected")
+         and the loading screen (character lock-in -> asset preload -> ready
+         check) are now rendered by React - see
+         public/src/components/StatusBanner.jsx and LoadingScreen.jsx,
+         driven by public/ui/statusBanner.js and loadingScreen.js. They're
+         mounted into #react-root near the bottom of this file, not here. -->
 
     <!-- ping/latency readout (public/src/components/PingDisplay.jsx, driven by
          public/ui/pingDisplay.js) is rendered into #react-root near the
          bottom of this file, not here. -->
-
-    <!-- loading screen: shown after character lock-in while assets preload and we
-         wait for both players to confirm readiness (see public/ui/loadingScreen.js) -->
-    <div id="loading-screen" class="hidden"></div>
 
     <!-- character selection ui -->
 
